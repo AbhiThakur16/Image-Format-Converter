@@ -1,0 +1,3 @@
+Pillow==12.3.0
+psd-tools
+customtkinter
