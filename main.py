@@ -20,22 +20,13 @@ class ImageConverterApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        # -----------------------------------------
-        # WINDOW SETTINGS
-        # -----------------------------------------
-
         self.title("Image Format Converter")
-
-        self.geometry("1000x820")
+        self.geometry("1000x850")
         self.minsize(900, 750)
 
-        # Selected images
         self.selected_files = []
-
-        # Preview image reference
         self.preview_image = None
 
-        # Default output directory
         self.output_directory = os.path.join(
             os.getcwd(),
             "output"
@@ -72,19 +63,13 @@ class ImageConverterApp(ctk.CTk):
             pady=(20, 5)
         )
 
-        # -----------------------------------------
-        # SUBTITLE
-        # -----------------------------------------
-
         subtitle_label = ctk.CTkLabel(
             self,
             text=(
-                "Convert PNG and JPEG images "
-                "to TIFF, BMP, PDF and PSD"
+                "Convert PNG/JPEG images to "
+                "TIFF, BMP, PDF and PSD"
             ),
-            font=ctk.CTkFont(
-                size=14
-            )
+            font=ctk.CTkFont(size=14)
         )
 
         subtitle_label.pack(
@@ -92,7 +77,7 @@ class ImageConverterApp(ctk.CTk):
         )
 
         # -----------------------------------------
-        # SCROLLABLE MAIN FRAME
+        # MAIN SCROLLABLE FRAME
         # -----------------------------------------
 
         self.main_frame = ctk.CTkScrollableFrame(
@@ -107,7 +92,7 @@ class ImageConverterApp(ctk.CTk):
         )
 
         # -----------------------------------------
-        # SELECT IMAGES BUTTON
+        # SELECT IMAGES
         # -----------------------------------------
 
         self.select_button = ctk.CTkButton(
@@ -126,16 +111,9 @@ class ImageConverterApp(ctk.CTk):
             pady=(20, 5)
         )
 
-        # -----------------------------------------
-        # IMAGE COUNT
-        # -----------------------------------------
-
         self.selected_count_label = ctk.CTkLabel(
             self.main_frame,
-            text="No images selected",
-            font=ctk.CTkFont(
-                size=13
-            )
+            text="No images selected"
         )
 
         self.selected_count_label.pack(
@@ -143,17 +121,17 @@ class ImageConverterApp(ctk.CTk):
         )
 
         # -----------------------------------------
-        # SELECTED FILE LIST
+        # FILE LIST
         # -----------------------------------------
 
         self.file_list_box = ctk.CTkTextbox(
             self.main_frame,
             width=650,
-            height=110
+            height=100
         )
 
         self.file_list_box.pack(
-            pady=10
+            pady=8
         )
 
         self.file_list_box.configure(
@@ -161,13 +139,13 @@ class ImageConverterApp(ctk.CTk):
         )
 
         # -----------------------------------------
-        # IMAGE PREVIEW
+        # PREVIEW
         # -----------------------------------------
 
         self.preview_frame = ctk.CTkFrame(
             self.main_frame,
             width=440,
-            height=230
+            height=220
         )
 
         self.preview_frame.pack(
@@ -180,10 +158,7 @@ class ImageConverterApp(ctk.CTk):
 
         self.preview_label = ctk.CTkLabel(
             self.preview_frame,
-            text="First Selected Image Preview",
-            font=ctk.CTkFont(
-                size=14
-            )
+            text="First Selected Image Preview"
         )
 
         self.preview_label.pack(
@@ -191,17 +166,13 @@ class ImageConverterApp(ctk.CTk):
         )
 
         # -----------------------------------------
-        # IMAGE INFORMATION
+        # IMAGE INFO
         # -----------------------------------------
 
         self.info_label = ctk.CTkLabel(
             self.main_frame,
             text="Image information will appear here.",
-            justify="left",
-            wraplength=820,
-            font=ctk.CTkFont(
-                size=13
-            )
+            wraplength=820
         )
 
         self.info_label.pack(
@@ -209,7 +180,7 @@ class ImageConverterApp(ctk.CTk):
         )
 
         # -----------------------------------------
-        # OUTPUT FORMAT LABEL
+        # OUTPUT FORMAT
         # -----------------------------------------
 
         format_label = ctk.CTkLabel(
@@ -225,10 +196,6 @@ class ImageConverterApp(ctk.CTk):
             pady=(12, 5)
         )
 
-        # -----------------------------------------
-        # OUTPUT FORMAT DROPDOWN
-        # -----------------------------------------
-
         self.format_dropdown = ctk.CTkOptionMenu(
             self.main_frame,
             values=[
@@ -238,7 +205,7 @@ class ImageConverterApp(ctk.CTk):
                 "PSD"
             ],
             width=200,
-            height=36
+            command=self.on_format_change
         )
 
         self.format_dropdown.set(
@@ -249,8 +216,176 @@ class ImageConverterApp(ctk.CTk):
             pady=5
         )
 
+        # =========================================
+        # TIFF / BMP SETTINGS FRAME
+        # =========================================
+
+        self.resize_settings_frame = ctk.CTkFrame(
+            self.main_frame
+        )
+
+        self.resize_settings_frame.pack(
+            padx=20,
+            pady=15
+        )
+
+        settings_title = ctk.CTkLabel(
+            self.resize_settings_frame,
+            text="Pixel Size & DPI Settings",
+            font=ctk.CTkFont(
+                size=16,
+                weight="bold"
+            )
+        )
+
+        settings_title.grid(
+            row=0,
+            column=0,
+            columnspan=4,
+            padx=10,
+            pady=(12, 10)
+        )
+
         # -----------------------------------------
-        # OUTPUT FOLDER BUTTON
+        # WIDTH
+        # -----------------------------------------
+
+        width_label = ctk.CTkLabel(
+            self.resize_settings_frame,
+            text="Width (px)"
+        )
+
+        width_label.grid(
+            row=1,
+            column=0,
+            padx=10,
+            pady=8
+        )
+
+        self.width_entry = ctk.CTkEntry(
+            self.resize_settings_frame,
+            width=130,
+            placeholder_text="e.g. 1920"
+        )
+
+        self.width_entry.grid(
+            row=1,
+            column=1,
+            padx=10,
+            pady=8
+        )
+
+        # -----------------------------------------
+        # HEIGHT
+        # -----------------------------------------
+
+        height_label = ctk.CTkLabel(
+            self.resize_settings_frame,
+            text="Height (px)"
+        )
+
+        height_label.grid(
+            row=1,
+            column=2,
+            padx=10,
+            pady=8
+        )
+
+        self.height_entry = ctk.CTkEntry(
+            self.resize_settings_frame,
+            width=130,
+            placeholder_text="e.g. 1080"
+        )
+
+        self.height_entry.grid(
+            row=1,
+            column=3,
+            padx=10,
+            pady=8
+        )
+
+        # -----------------------------------------
+        # DPI
+        # -----------------------------------------
+
+        dpi_label = ctk.CTkLabel(
+            self.resize_settings_frame,
+            text="DPI"
+        )
+
+        dpi_label.grid(
+            row=2,
+            column=0,
+            padx=10,
+            pady=8
+        )
+
+        self.dpi_dropdown = ctk.CTkOptionMenu(
+            self.resize_settings_frame,
+            values=[
+                "72",
+                "96",
+                "150",
+                "300",
+                "Custom"
+            ],
+            width=130,
+            command=self.on_dpi_change
+        )
+
+        self.dpi_dropdown.set(
+            "300"
+        )
+
+        self.dpi_dropdown.grid(
+            row=2,
+            column=1,
+            padx=10,
+            pady=8
+        )
+
+        # -----------------------------------------
+        # CUSTOM DPI
+        # -----------------------------------------
+
+        self.custom_dpi_label = ctk.CTkLabel(
+            self.resize_settings_frame,
+            text="Custom DPI"
+        )
+
+        self.custom_dpi_entry = ctk.CTkEntry(
+            self.resize_settings_frame,
+            width=130,
+            placeholder_text="e.g. 600"
+        )
+
+        # Hide custom DPI initially
+        self.custom_dpi_label.grid_remove()
+        self.custom_dpi_entry.grid_remove()
+
+        # -----------------------------------------
+        # HELP TEXT
+        # -----------------------------------------
+
+        self.settings_help = ctk.CTkLabel(
+            self.resize_settings_frame,
+            text=(
+                "Leave Width and Height empty to keep "
+                "the original pixel size."
+            ),
+            font=ctk.CTkFont(size=12)
+        )
+
+        self.settings_help.grid(
+            row=3,
+            column=0,
+            columnspan=4,
+            padx=10,
+            pady=(5, 12)
+        )
+
+        # -----------------------------------------
+        # OUTPUT FOLDER
         # -----------------------------------------
 
         self.output_button = ctk.CTkButton(
@@ -262,20 +397,13 @@ class ImageConverterApp(ctk.CTk):
         )
 
         self.output_button.pack(
-            pady=(12, 5)
+            pady=(10, 5)
         )
-
-        # -----------------------------------------
-        # OUTPUT FOLDER LABEL
-        # -----------------------------------------
 
         self.output_label = ctk.CTkLabel(
             self.main_frame,
             text=f"Output: {self.output_directory}",
-            wraplength=820,
-            font=ctk.CTkFont(
-                size=12
-            )
+            wraplength=820
         )
 
         self.output_label.pack(
@@ -283,7 +411,7 @@ class ImageConverterApp(ctk.CTk):
         )
 
         # -----------------------------------------
-        # ACTION BUTTON FRAME
+        # ACTION BUTTONS
         # -----------------------------------------
 
         self.button_frame = ctk.CTkFrame(
@@ -294,10 +422,6 @@ class ImageConverterApp(ctk.CTk):
         self.button_frame.pack(
             pady=18
         )
-
-        # -----------------------------------------
-        # CONVERT BUTTON
-        # -----------------------------------------
 
         self.convert_button = ctk.CTkButton(
             self.button_frame,
@@ -314,13 +438,8 @@ class ImageConverterApp(ctk.CTk):
         self.convert_button.grid(
             row=0,
             column=0,
-            padx=8,
-            pady=5
+            padx=8
         )
-
-        # -----------------------------------------
-        # RESET BUTTON
-        # -----------------------------------------
 
         self.reset_button = ctk.CTkButton(
             self.button_frame,
@@ -333,13 +452,8 @@ class ImageConverterApp(ctk.CTk):
         self.reset_button.grid(
             row=0,
             column=1,
-            padx=8,
-            pady=5
+            padx=8
         )
-
-        # -----------------------------------------
-        # OPEN FOLDER BUTTON
-        # -----------------------------------------
 
         self.open_folder_button = ctk.CTkButton(
             self.button_frame,
@@ -352,8 +466,7 @@ class ImageConverterApp(ctk.CTk):
         self.open_folder_button.grid(
             row=0,
             column=2,
-            padx=8,
-            pady=5
+            padx=8
         )
 
         # -----------------------------------------
@@ -362,10 +475,7 @@ class ImageConverterApp(ctk.CTk):
 
         self.status_label = ctk.CTkLabel(
             self.main_frame,
-            text="Ready",
-            font=ctk.CTkFont(
-                size=13
-            )
+            text="Ready"
         )
 
         self.status_label.pack(
@@ -374,7 +484,54 @@ class ImageConverterApp(ctk.CTk):
 
 
     # =================================================
-    # SELECT MULTIPLE IMAGES
+    # FORMAT CHANGE
+    # =================================================
+
+    def on_format_change(self, selected_format):
+
+        if selected_format in (
+            "TIFF",
+            "BMP"
+        ):
+            self.resize_settings_frame.pack(
+                padx=20,
+                pady=15
+            )
+
+        else:
+            self.resize_settings_frame.pack_forget()
+
+
+    # =================================================
+    # DPI CHANGE
+    # =================================================
+
+    def on_dpi_change(self, selected_dpi):
+
+        if selected_dpi == "Custom":
+
+            self.custom_dpi_label.grid(
+                row=2,
+                column=2,
+                padx=10,
+                pady=8
+            )
+
+            self.custom_dpi_entry.grid(
+                row=2,
+                column=3,
+                padx=10,
+                pady=8
+            )
+
+        else:
+
+            self.custom_dpi_label.grid_remove()
+            self.custom_dpi_entry.grid_remove()
+
+
+    # =================================================
+    # SELECT IMAGES
     # =================================================
 
     def select_images(self):
@@ -400,7 +557,9 @@ class ImageConverterApp(ctk.CTk):
         if not files:
             return
 
-        self.selected_files = list(files)
+        self.selected_files = list(
+            files
+        )
 
         total_files = len(
             self.selected_files
@@ -412,19 +571,62 @@ class ImageConverterApp(ctk.CTk):
 
         self.update_file_list()
 
-        # Preview first selected image
         self.show_preview(
             self.selected_files[0]
         )
 
-        # First image information
         self.show_image_information(
+            self.selected_files[0]
+        )
+
+        self.fill_original_dimensions(
             self.selected_files[0]
         )
 
         self.status_label.configure(
             text="Images loaded successfully."
         )
+
+
+    # =================================================
+    # ORIGINAL DIMENSIONS
+    # =================================================
+
+    def fill_original_dimensions(
+        self,
+        file_path
+    ):
+
+        try:
+
+            with Image.open(
+                file_path
+            ) as image:
+
+                width, height = image.size
+
+            self.width_entry.delete(
+                0,
+                "end"
+            )
+
+            self.width_entry.insert(
+                0,
+                str(width)
+            )
+
+            self.height_entry.delete(
+                0,
+                "end"
+            )
+
+            self.height_entry.insert(
+                0,
+                str(height)
+            )
+
+        except Exception:
+            pass
 
 
     # =================================================
@@ -462,7 +664,7 @@ class ImageConverterApp(ctk.CTk):
 
 
     # =================================================
-    # SHOW IMAGE PREVIEW
+    # PREVIEW
     # =================================================
 
     def show_preview(
@@ -479,7 +681,7 @@ class ImageConverterApp(ctk.CTk):
                 preview = image.copy()
 
             preview.thumbnail(
-                (410, 210)
+                (410, 200)
             )
 
             self.preview_image = ctk.CTkImage(
@@ -507,7 +709,7 @@ class ImageConverterApp(ctk.CTk):
 
 
     # =================================================
-    # SHOW IMAGE INFORMATION
+    # IMAGE INFORMATION
     # =================================================
 
     def show_image_information(
@@ -522,8 +724,15 @@ class ImageConverterApp(ctk.CTk):
             ) as image:
 
                 width, height = image.size
+
                 image_format = image.format
+
                 image_mode = image.mode
+
+                dpi = image.info.get(
+                    "dpi",
+                    "Not available"
+                )
 
             file_size = os.path.getsize(
                 file_path
@@ -537,9 +746,10 @@ class ImageConverterApp(ctk.CTk):
                 f"First Image: "
                 f"{os.path.basename(file_path)}\n\n"
                 f"Format: {image_format}   |   "
-                f"Dimensions: {width} × {height} pixels   |   "
+                f"Dimensions: {width} × {height}px   |   "
                 f"Mode: {image_mode}   |   "
-                f"File Size: {file_size_kb:.2f} KB"
+                f"Original DPI: {dpi}   |   "
+                f"Size: {file_size_kb:.2f} KB"
             )
 
             self.info_label.configure(
@@ -549,15 +759,12 @@ class ImageConverterApp(ctk.CTk):
         except Exception as error:
 
             self.info_label.configure(
-                text=(
-                    "Unable to read image information: "
-                    f"{error}"
-                )
+                text=f"Unable to read image: {error}"
             )
 
 
     # =================================================
-    # SELECT OUTPUT FOLDER
+    # OUTPUT FOLDER
     # =================================================
 
     def select_output_folder(self):
@@ -581,7 +788,94 @@ class ImageConverterApp(ctk.CTk):
 
 
     # =================================================
-    # CONVERT IMAGES
+    # GET RESIZE SETTINGS
+    # =================================================
+
+    def get_resize_settings(self):
+
+        output_format = (
+            self.format_dropdown.get()
+        )
+
+        if output_format not in (
+            "TIFF",
+            "BMP"
+        ):
+            return None, None, None
+
+        width_text = (
+            self.width_entry.get().strip()
+        )
+
+        height_text = (
+            self.height_entry.get().strip()
+        )
+
+        # Keep original size if both blank
+        if (
+            width_text == ""
+            and height_text == ""
+        ):
+            width = None
+            height = None
+
+        else:
+
+            if (
+                width_text == ""
+                or height_text == ""
+            ):
+                raise ValueError(
+                    "Please enter both Width and Height."
+                )
+
+            width = int(
+                width_text
+            )
+
+            height = int(
+                height_text
+            )
+
+            if width <= 0 or height <= 0:
+                raise ValueError(
+                    "Width and Height must be greater than 0."
+                )
+
+        selected_dpi = (
+            self.dpi_dropdown.get()
+        )
+
+        if selected_dpi == "Custom":
+
+            custom_dpi = (
+                self.custom_dpi_entry.get().strip()
+            )
+
+            if not custom_dpi:
+                raise ValueError(
+                    "Please enter a custom DPI."
+                )
+
+            dpi = int(
+                custom_dpi
+            )
+
+        else:
+            dpi = int(
+                selected_dpi
+            )
+
+        if dpi <= 0:
+            raise ValueError(
+                "DPI must be greater than 0."
+            )
+
+        return width, height, dpi
+
+
+    # =================================================
+    # CONVERT
     # =================================================
 
     def convert_images(self):
@@ -601,19 +895,16 @@ class ImageConverterApp(ctk.CTk):
 
         try:
 
+            width, height, dpi = (
+                self.get_resize_settings()
+            )
+
             self.convert_button.configure(
                 state="disabled"
             )
 
-            total_files = len(
-                self.selected_files
-            )
-
             self.status_label.configure(
-                text=(
-                    f"Converting {total_files} image(s) "
-                    f"to {output_format}..."
-                )
+                text="Converting images..."
             )
 
             self.update_idletasks()
@@ -622,7 +913,10 @@ class ImageConverterApp(ctk.CTk):
                 convert_multiple_images(
                     self.selected_files,
                     self.output_directory,
-                    output_format
+                    output_format,
+                    width,
+                    height,
+                    dpi
                 )
             )
 
@@ -642,26 +936,38 @@ class ImageConverterApp(ctk.CTk):
                 )
             )
 
-            # -----------------------------------------
-            # ALL SUCCESSFUL
-            # -----------------------------------------
-
             if failed_count == 0:
+
+                details = (
+                    f"{success_count} image(s) "
+                    f"converted to {output_format}."
+                )
+
+                if output_format in (
+                    "TIFF",
+                    "BMP"
+                ):
+
+                    if width and height:
+
+                        details += (
+                            f"\n\nPixel Size: "
+                            f"{width} × {height}px"
+                        )
+
+                    details += (
+                        f"\nDPI: {dpi}"
+                    )
+
+                details += (
+                    f"\n\nSaved at:\n"
+                    f"{self.output_directory}"
+                )
 
                 messagebox.showinfo(
                     "Conversion Complete",
-                    (
-                        f"{success_count} image(s) "
-                        f"successfully converted "
-                        f"to {output_format}.\n\n"
-                        f"Output Folder:\n"
-                        f"{self.output_directory}"
-                    )
+                    details
                 )
-
-            # -----------------------------------------
-            # SOME FAILED
-            # -----------------------------------------
 
             else:
 
@@ -669,12 +975,9 @@ class ImageConverterApp(ctk.CTk):
 
                 for failed in failed_files:
 
-                    file_name = os.path.basename(
-                        failed["file"]
-                    )
-
                     error_text += (
-                        f"\n{file_name}: "
+                        f"\n"
+                        f"{os.path.basename(failed['file'])}: "
                         f"{failed['error']}"
                     )
 
@@ -686,6 +989,13 @@ class ImageConverterApp(ctk.CTk):
                         f"{error_text}"
                     )
                 )
+
+        except ValueError as error:
+
+            messagebox.showwarning(
+                "Invalid Settings",
+                str(error)
+            )
 
         except Exception as error:
 
@@ -711,17 +1021,6 @@ class ImageConverterApp(ctk.CTk):
 
     def open_output_folder(self):
 
-        if not os.path.exists(
-            self.output_directory
-        ):
-
-            messagebox.showwarning(
-                "Folder Not Found",
-                "Output folder does not exist."
-            )
-
-            return
-
         try:
 
             os.startfile(
@@ -732,31 +1031,23 @@ class ImageConverterApp(ctk.CTk):
 
             messagebox.showerror(
                 "Error",
-                (
-                    "Unable to open output folder.\n\n"
-                    f"{error}"
-                )
+                str(error)
             )
 
 
     # =================================================
-    # RESET APP
+    # RESET
     # =================================================
 
     def reset_app(self):
 
-        # Remove selected files
         self.selected_files = []
-
-        # Remove image reference
         self.preview_image = None
 
-        # Reset image count
         self.selected_count_label.configure(
             text="No images selected"
         )
 
-        # Clear file list
         self.file_list_box.configure(
             state="normal"
         )
@@ -770,30 +1061,53 @@ class ImageConverterApp(ctk.CTk):
             state="disabled"
         )
 
-        # Reset preview
         self.preview_label.configure(
             image=None,
             text="First Selected Image Preview"
         )
 
-        # Reset information
         self.info_label.configure(
             text="Image information will appear here."
         )
 
-        # Reset output format
+        self.width_entry.delete(
+            0,
+            "end"
+        )
+
+        self.height_entry.delete(
+            0,
+            "end"
+        )
+
+        self.custom_dpi_entry.delete(
+            0,
+            "end"
+        )
+
         self.format_dropdown.set(
             "TIFF"
         )
 
-        # Reset status
+        self.dpi_dropdown.set(
+            "300"
+        )
+
+        self.on_format_change(
+            "TIFF"
+        )
+
+        self.on_dpi_change(
+            "300"
+        )
+
         self.status_label.configure(
             text="Ready"
         )
 
 
 # =====================================================
-# RUN APPLICATION
+# RUN APP
 # =====================================================
 
 if __name__ == "__main__":
