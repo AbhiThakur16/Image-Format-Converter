@@ -33,7 +33,7 @@ st.markdown(
 <style>
 
 .stApp {
-    background-color: #f6f8fc;
+    background-color: #eef4ff;
 }
 
 .block-container {
@@ -43,8 +43,8 @@ st.markdown(
 }
 
 [data-testid="stSidebar"] {
-    background-color: #ffffff;
-    border-right: 1px solid #e5e7eb;
+    background-color: #e8f1ff;
+    border-right: 1px solid #bfd3f2;
 }
 
 h1, h2, h3, h4 {
@@ -697,6 +697,10 @@ custom_height = 1080.0
 
 custom_unit = "Pixels"
 
+custom_pixels_enabled = False
+custom_pixel_width = 1920
+custom_pixel_height = 1080
+
 dpi = 300
 
 color_mode = "RGB Color"
@@ -873,6 +877,59 @@ with st.sidebar:
                         step=step_size
                     )
                 )
+
+        # -------------------------------------------------
+        # SEPARATE CUSTOM PIXELS CHANGER
+        # -------------------------------------------------
+
+        st.divider()
+
+        st.subheader(
+            "🔢 Custom Pixels Changer"
+        )
+
+        custom_pixels_enabled = st.checkbox(
+            "Use Custom Pixels",
+            value=False,
+            help=(
+                "Enable this to override the selected "
+                "size preset with any pixel width and height."
+            )
+        )
+
+        pixel_col1, pixel_col2 = (
+            st.columns(2)
+        )
+
+        with pixel_col1:
+            custom_pixel_width = (
+                st.number_input(
+                    "Width (px)",
+                    min_value=1,
+                    max_value=50000,
+                    value=1920,
+                    step=1,
+                    disabled=not custom_pixels_enabled
+                )
+            )
+
+        with pixel_col2:
+            custom_pixel_height = (
+                st.number_input(
+                    "Height (px)",
+                    min_value=1,
+                    max_value=50000,
+                    value=1080,
+                    step=1,
+                    disabled=not custom_pixels_enabled
+                )
+            )
+
+        st.caption(
+            "Enter any Width and Height. "
+            "When enabled, these pixels override "
+            "the selected size setting."
+        )
 
         # -------------------------------------------------
         # RESIZE BEHAVIOUR
@@ -1204,6 +1261,15 @@ if output_format in (
                 dpi
             )
         )
+        # CUSTOM PIXELS OVERRIDE - OUTPUT SPEC
+        if custom_pixels_enabled:
+            target_width = int(
+                custom_pixel_width
+            )
+            target_height = int(
+                custom_pixel_height
+            )
+
 
         (
             expected_width,
@@ -1425,6 +1491,9 @@ current_signature = (
     custom_width,
     custom_height,
     custom_unit,
+    custom_pixels_enabled,
+    custom_pixel_width,
+    custom_pixel_height,
     dpi,
     color_mode,
     resize_quality,
@@ -1518,6 +1587,14 @@ if convert_clicked:
                         dpi
                     )
                 )
+                # CUSTOM PIXELS OVERRIDE - CONVERSION
+                if custom_pixels_enabled:
+                    target_width = int(
+                        custom_pixel_width
+                    )
+                    target_height = int(
+                        custom_pixel_height
+                    )
 
             else:
 
