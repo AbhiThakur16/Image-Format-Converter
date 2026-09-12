@@ -106,6 +106,135 @@ hr {
     border-color: #e2e8f0;
 }
 
+
+/* =========================================================
+   MOBILE / TABLET OPTIMIZATION
+   Existing desktop design and sidebar are unchanged.
+   ========================================================= */
+
+@media (max-width: 900px) {
+
+    .block-container {
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+        padding-top: 1rem !important;
+    }
+
+    h1 {
+        font-size: 2rem !important;
+        line-height: 1.15 !important;
+    }
+
+    h2 {
+        font-size: 1.35rem !important;
+    }
+
+    h3 {
+        font-size: 1.1rem !important;
+    }
+
+    div.stButton > button,
+    div.stDownloadButton > button {
+        min-height: 48px !important;
+    }
+}
+
+
+@media (max-width: 640px) {
+
+    .block-container {
+        padding-left: 0.65rem !important;
+        padding-right: 0.65rem !important;
+        padding-top: 0.7rem !important;
+        padding-bottom: 2rem !important;
+    }
+
+    h1 {
+        font-size: 1.65rem !important;
+        line-height: 1.12 !important;
+    }
+
+    h2 {
+        font-size: 1.22rem !important;
+        line-height: 1.2 !important;
+    }
+
+    h3 {
+        font-size: 1.05rem !important;
+    }
+
+    p,
+    label {
+        font-size: 0.92rem !important;
+    }
+
+    /* Stack normal page columns vertically on mobile */
+    section.main [data-testid="stHorizontalBlock"] {
+        flex-wrap: wrap !important;
+        gap: 0.55rem !important;
+    }
+
+    section.main [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
+        flex: 1 1 100% !important;
+        width: 100% !important;
+        min-width: 100% !important;
+    }
+
+    [data-testid="stMetric"] {
+        padding: 10px !important;
+        border-radius: 12px !important;
+    }
+
+    [data-testid="stMetricLabel"] {
+        font-size: 0.78rem !important;
+    }
+
+    [data-testid="stMetricValue"] {
+        font-size: 1.05rem !important;
+    }
+
+    [data-testid="stFileUploader"] {
+        padding: 5px !important;
+        border-radius: 12px !important;
+    }
+
+    [data-testid="stFileUploaderDropzone"] {
+        padding: 0.75rem !important;
+        min-height: 82px !important;
+    }
+
+    div.stButton > button,
+    div.stDownloadButton > button {
+        width: 100% !important;
+        min-height: 48px !important;
+        font-size: 0.98rem !important;
+        border-radius: 11px !important;
+    }
+
+    [data-baseweb="select"] > div,
+    [data-testid="stNumberInput"] input {
+        min-height: 46px !important;
+        font-size: 16px !important;
+    }
+
+    .stMarkdown,
+    .stCaption,
+    code,
+    pre {
+        overflow-wrap: anywhere !important;
+        word-break: break-word !important;
+    }
+
+    hr {
+        margin-top: 0.8rem !important;
+        margin-bottom: 0.8rem !important;
+    }
+
+    [data-testid="stVerticalBlock"] {
+        gap: 0.55rem !important;
+    }
+}
+
 </style>
 """,
     unsafe_allow_html=True
@@ -906,7 +1035,7 @@ with st.sidebar:
                 st.number_input(
                     "Width (px)",
                     min_value=1,
-                    max_value=50000,
+                    max_value=150000,
                     value=1920,
                     step=1,
                     disabled=not custom_pixels_enabled
@@ -918,7 +1047,7 @@ with st.sidebar:
                 st.number_input(
                     "Height (px)",
                     min_value=1,
-                    max_value=50000,
+                    max_value=150000,
                     value=1080,
                     step=1,
                     disabled=not custom_pixels_enabled
