@@ -1,4 +1,5 @@
 import io
+import math
 import os
 
 import streamlit as st
@@ -106,6 +107,146 @@ hr {
     border-color: #e2e8f0;
 }
 
+
+
+/* =========================================================
+   HIGH-CONTRAST MOBILE + SIDEBAR COLOR FIX
+   ========================================================= */
+
+html,
+body,
+.stApp {
+    color-scheme: light !important;
+}
+
+.stApp {
+    color: #172033 !important;
+}
+
+/* Sidebar background and ALL text */
+[data-testid="stSidebar"],
+[data-testid="stSidebar"] > div {
+    background-color: #e8f1ff !important;
+}
+
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3,
+[data-testid="stSidebar"] h4,
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] span,
+[data-testid="stSidebar"] small,
+[data-testid="stSidebar"] div {
+    color: #172033 !important;
+    opacity: 1 !important;
+}
+
+/* Captions/help text */
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"],
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"] p,
+[data-testid="stSidebar"] .stCaption,
+[data-testid="stSidebar"] small {
+    color: #52657f !important;
+    opacity: 1 !important;
+}
+
+/* Select boxes */
+[data-testid="stSidebar"] div[data-baseweb="select"] > div,
+div[data-baseweb="select"] > div {
+    background-color: #ffffff !important;
+    color: #111827 !important;
+    border-color: #b8c8df !important;
+}
+
+[data-testid="stSidebar"] div[data-baseweb="select"] span,
+[data-testid="stSidebar"] div[data-baseweb="select"] svg,
+div[data-baseweb="select"] span,
+div[data-baseweb="select"] svg {
+    color: #111827 !important;
+    fill: #111827 !important;
+}
+
+/* Dropdown popup menu is rendered outside sidebar */
+[role="listbox"],
+[role="option"],
+div[data-baseweb="popover"] {
+    background-color: #ffffff !important;
+    color: #111827 !important;
+}
+
+[role="option"] * {
+    color: #111827 !important;
+}
+
+/* Number inputs */
+[data-testid="stNumberInput"] input {
+    background-color: #ffffff !important;
+    color: #111827 !important;
+    -webkit-text-fill-color: #111827 !important;
+    opacity: 1 !important;
+}
+
+[data-testid="stNumberInput"] button {
+    background-color: #eef2f7 !important;
+    color: #111827 !important;
+    border-color: #cbd5e1 !important;
+}
+
+[data-testid="stNumberInput"] button svg {
+    fill: #111827 !important;
+    color: #111827 !important;
+}
+
+/* Checkbox labels */
+[data-testid="stCheckbox"] label,
+[data-testid="stCheckbox"] span {
+    color: #172033 !important;
+    opacity: 1 !important;
+}
+
+/* Sliders */
+[data-testid="stSlider"] label,
+[data-testid="stSlider"] p,
+[data-testid="stSlider"] span {
+    color: #172033 !important;
+    opacity: 1 !important;
+}
+
+[data-testid="stSlider"] [role="slider"] {
+    background-color: #2563eb !important;
+    border-color: #2563eb !important;
+}
+
+/* Dividers */
+[data-testid="stSidebar"] hr {
+    border-color: #bfd3f2 !important;
+}
+
+/* Metric text */
+[data-testid="stMetricLabel"],
+[data-testid="stMetricValue"] {
+    color: #172033 !important;
+}
+
+/* File uploader */
+[data-testid="stFileUploader"] * {
+    color: #172033 !important;
+}
+
+/* Mobile sidebar width */
+@media (max-width: 900px) {
+    [data-testid="stSidebar"] {
+        width: 88vw !important;
+        min-width: 88vw !important;
+        max-width: 88vw !important;
+    }
+
+    [data-testid="stSidebar"] .block-container {
+        padding-left: 0.8rem !important;
+        padding-right: 0.8rem !important;
+    }
+}
 
 /* =========================================================
    MOBILE / TABLET OPTIMIZATION
@@ -334,6 +475,53 @@ def get_tiff_compression(
 
 
 # =========================================================
+# TARGET TOTAL PIXELS
+# =========================================================
+
+def target_pixels_to_dimensions(
+    original_size,
+    total_pixels
+):
+    """
+    Convert a requested TOTAL pixel count into Width × Height
+    while preserving the original image aspect ratio.
+
+    Example:
+    100000 total pixels -> dimensions are calculated automatically.
+    """
+
+    original_width, original_height = original_size
+
+    if original_width <= 0 or original_height <= 0:
+        return 1, 1
+
+    aspect_ratio = (
+        original_width / original_height
+    )
+
+    width = max(
+        1,
+        round(
+            math.sqrt(
+                int(total_pixels) * aspect_ratio
+            )
+        )
+    )
+
+    height = max(
+        1,
+        round(
+            int(total_pixels) / width
+        )
+    )
+
+    return (
+        width,
+        height
+    )
+
+
+# =========================================================
 # TARGET SIZE
 # =========================================================
 
@@ -346,6 +534,7 @@ def calculate_target_size(
     custom_width,
     custom_height,
     custom_unit,
+    target_total_pixels,
     dpi
 ):
 
@@ -375,6 +564,14 @@ def calculate_target_size(
             paper_size,
             orientation,
             dpi
+        )
+
+    # TARGET TOTAL PIXELS
+    if size_mode == "Target Total Pixels":
+
+        return target_pixels_to_dimensions(
+            original_size,
+            target_total_pixels
         )
 
     # CUSTOM
@@ -830,6 +1027,8 @@ custom_pixels_enabled = False
 custom_pixel_width = 1920
 custom_pixel_height = 1080
 
+target_total_pixels = 100000
+
 dpi = 300
 
 color_mode = "RGB Color"
@@ -904,6 +1103,7 @@ with st.sidebar:
                 "Original Size",
                 "Screen Resolution",
                 "Print Preset",
+                "Target Total Pixels",
                 "Custom Size"
             ]
         )
@@ -947,6 +1147,38 @@ with st.sidebar:
                     "Portrait",
                     "Landscape"
                 ]
+            )
+
+        # -------------------------------------------------
+        # TARGET TOTAL PIXELS
+        # -------------------------------------------------
+
+        elif size_mode == (
+            "Target Total Pixels"
+        ):
+
+            st.markdown(
+                "#### 🎯 Target Total Pixels"
+            )
+
+            target_total_pixels = st.slider(
+                "Total Pixel Count",
+                min_value=75000,
+                max_value=150000,
+                value=100000,
+                step=5000,
+                help=(
+                    "Select the total output pixel count "
+                    "from 0.75 lakh to 1.50 lakh. "
+                    "Width and Height are calculated automatically "
+                    "using the original aspect ratio."
+                )
+            )
+
+            st.caption(
+                f"Selected: "
+                f"{target_total_pixels / 100000:.2f} lakh "
+                f"({target_total_pixels:,} total pixels)"
             )
 
         # -------------------------------------------------
@@ -1320,6 +1552,7 @@ if not uploaded_files:
 - 2K
 - 4K
 - Custom Pixels
+- Target Pixels: 0.75–1.50 lakh
 """
             )
 
@@ -1387,6 +1620,7 @@ if output_format in (
                 custom_width,
                 custom_height,
                 custom_unit,
+                target_total_pixels,
                 dpi
             )
         )
@@ -1623,6 +1857,7 @@ current_signature = (
     custom_pixels_enabled,
     custom_pixel_width,
     custom_pixel_height,
+    target_total_pixels,
     dpi,
     color_mode,
     resize_quality,
