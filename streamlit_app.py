@@ -3,7 +3,6 @@ import math
 import os
 import re
 import hashlib
-import zipfile
 
 import streamlit as st
 from PIL import Image
@@ -46,6 +45,16 @@ from smart_export import (
 )
 
 from psd_export import export_flattened_psd
+
+from input_engine import (
+    load_input_file,
+    get_input_info,
+    input_result_to_png_bytes,
+)
+
+from pdf_batch_engine import (
+    render_all_pdf_pages_as_png,
+)
 
 
 # =========================================================
@@ -175,7 +184,6 @@ div.stDownloadButton > button {
 # =========================================================
 
 MAX_DIMENSION = 150000
-
 MAX_TOTAL_EXPORT_PIXELS = 150_000_000
 
 
@@ -200,6 +208,15 @@ DPI_PRESETS = [
 ]
 
 
+INPUT_RENDER_DPI_PRESETS = [
+    72,
+    96,
+    150,
+    300,
+    600,
+]
+
+
 SMART_EXPORT_PRIORITIES = [
     "Balanced",
     "Smallest File",
@@ -208,7 +225,7 @@ SMART_EXPORT_PRIORITIES = [
 
 
 # =========================================================
-# IMAGE ANALYSIS CACHE
+# CACHE
 # =========================================================
 
 @st.cache_data(show_spinner=False)
@@ -223,8 +240,113 @@ def cached_ai_analysis(image_bytes):
     return analyze_image(image)
 
 
+@st.cache_data(show_spinner=False)
+def cached_get_input_info(
+    file_bytes,
+    filename,
+):
+
+    return get_input_info(
+        file_bytes,
+        filename,
+    )
+
+
+@st.cache_data(show_spinner=False)
+def cached_prepare_input(
+    file_bytes,
+    filename,
+    page_number=1,
+    render_dpi=150,
+):
+
+    result = load_input_file(
+        file_bytes,
+        filename,
+        page_number=page_number,
+        render_dpi=render_dpi,
+    )
+
+    png_bytes = input_result_to_png_bytes(
+        result
+    )
+
+    image = result["image"]
+
+    return {
+        "png_bytes": png_bytes,
+        "format": result.get(
+            "format",
+            "Unknown",
+        ),
+        "mode": image.mode,
+        "width": image.width,
+        "height": image.height,
+        "dpi": result.get("dpi"),
+        "type": result.get(
+            "type",
+            "image",
+        ),
+        "page_count": result.get(
+            "page_count",
+            1,
+        ),
+        "selected_page": result.get(
+            "selected_page",
+            1,
+        ),
+        "warnings": result.get(
+            "warnings",
+            [],
+        ),
+    }
+
+
+@st.cache_data(show_spinner=False)
+def cached_prepare_all_pdf_pages(
+    file_bytes,
+    render_dpi=150,
+):
+
+    pages = render_all_pdf_pages_as_png(
+        file_bytes,
+        dpi=render_dpi,
+    )
+
+    prepared = []
+
+    for page in pages:
+
+        prepared.append(
+            {
+                "page_number":
+                    page["page_number"],
+
+                "page_count":
+                    page["page_count"],
+
+                "png_bytes":
+                    page["data"],
+
+                "width":
+                    page["width"],
+
+                "height":
+                    page["height"],
+
+                "mode":
+                    page["mode"],
+
+                "dpi":
+                    page["dpi"],
+            }
+        )
+
+    return prepared
+
+
 # =========================================================
-# TARGET TOTAL PIXELS
+# PIXEL HELPERS
 # =========================================================
 
 def target_pixels_to_dimensions(
@@ -232,7 +354,9 @@ def target_pixels_to_dimensions(
     total_pixels,
 ):
 
-    original_width, original_height = original_size
+    original_width, original_height = (
+        original_size
+    )
 
     total_pixels = max(
         1,
@@ -285,16 +409,14 @@ def target_pixels_to_dimensions(
     )
 
 
-# =========================================================
-# ASPECT RATIO
-# =========================================================
-
 def dimensions_from_width(
     original_size,
     new_width,
 ):
 
-    original_width, original_height = original_size
+    original_width, original_height = (
+        original_size
+    )
 
     ratio = (
         original_height
@@ -302,7 +424,8 @@ def dimensions_from_width(
     )
 
     new_height = round(
-        new_width * ratio
+        new_width
+        * ratio
     )
 
     new_height = max(
@@ -320,7 +443,7 @@ def dimensions_from_width(
 
 
 # =========================================================
-# IMAGE → PNG BYTES
+# IMAGE HELPERS
 # =========================================================
 
 def image_to_bytes(image):
@@ -339,10 +462,6 @@ def image_to_bytes(image):
     return buffer.getvalue()
 
 
-# =========================================================
-# SAFE FILE NAME
-# =========================================================
-
 def safe_filename_part(text):
 
     text = str(text).lower()
@@ -354,72 +473,6 @@ def safe_filename_part(text):
     )
 
     return text.strip("_")
-
-
-# =========================================================
-# CREATE ZIP FROM EXPORT RESULTS
-# =========================================================
-
-def create_exports_zip(results):
-
-    zip_buffer = io.BytesIO()
-
-    used_names = set()
-
-    with zipfile.ZipFile(
-        zip_buffer,
-        mode="w",
-        compression=zipfile.ZIP_DEFLATED,
-    ) as zip_file:
-
-        for index, result in enumerate(
-            results,
-            start=1,
-        ):
-
-            if not result.get(
-                "success"
-            ):
-                continue
-
-            file_name = result.get(
-                "output_name",
-                f"export_{index}",
-            )
-
-            original_name = file_name
-
-            counter = 1
-
-            while file_name in used_names:
-
-                name_part, extension = (
-                    os.path.splitext(
-                        original_name
-                    )
-                )
-
-                file_name = (
-                    f"{name_part}_{counter}"
-                    f"{extension}"
-                )
-
-                counter += 1
-
-            used_names.add(
-                file_name
-            )
-
-            zip_file.writestr(
-                file_name,
-                result[
-                    "data"
-                ],
-            )
-
-    zip_buffer.seek(0)
-
-    return zip_buffer.getvalue()
 
 
 # =========================================================
@@ -443,7 +496,7 @@ class MemoryUploadedFile:
 
 
 # =========================================================
-# INITIALIZE LAYER STATE
+# LAYER STATE
 # =========================================================
 
 def initialize_layer_state(
@@ -522,10 +575,6 @@ def initialize_layer_state(
     ]
 
 
-# =========================================================
-# COLLECT PROJECT LAYERS
-# =========================================================
-
 def collect_project_layers(prefix):
 
     layers_key = (
@@ -536,7 +585,6 @@ def collect_project_layers(prefix):
         layers_key
         not in st.session_state
     ):
-
         return []
 
     layers = (
@@ -610,10 +658,6 @@ def collect_project_layers(prefix):
     return project_layers
 
 
-# =========================================================
-# RESTORE PROJECT LAYERS
-# =========================================================
-
 def restore_project_layers(
     prefix,
     layers,
@@ -666,10 +710,6 @@ def restore_project_layers(
             ),
         )
 
-
-# =========================================================
-# REBUILD LAYER GROUP
-# =========================================================
 
 def rebuild_layer_group(prefix):
 
@@ -726,7 +766,7 @@ def rebuild_layer_group(prefix):
 
 
 # =========================================================
-# BUILD EXPORT SOURCES
+# EXPORT SOURCES
 # =========================================================
 
 def build_export_sources(
@@ -779,116 +819,53 @@ def build_export_sources(
                 "Background Removed Image"
             ] = background_image
 
-    color_rebuilt = (
-        rebuild_layer_group(
-            "color"
-        )
-    )
+    group_map = {
+        "Color Layer Reconstruction":
+            "color",
 
-    if isinstance(
-        color_rebuilt,
-        Image.Image,
+        "Semantic Reconstruction":
+            "semantic",
+
+        "Object Layer Reconstruction":
+            "object",
+
+        "Segmented Objects":
+            "segment",
+
+        "Extracted Color Layer":
+            "smartcolor",
+
+        "Text Layer Reconstruction":
+            "text",
+
+        "OCR Layer Reconstruction":
+            "ocr",
+    }
+
+    for source_name, prefix in (
+        group_map.items()
     ):
 
-        sources[
-            "Color Layer Reconstruction"
-        ] = color_rebuilt
-
-    semantic_rebuilt = (
-        rebuild_layer_group(
-            "semantic"
+        rebuilt = (
+            rebuild_layer_group(
+                prefix
+            )
         )
-    )
 
-    if isinstance(
-        semantic_rebuilt,
-        Image.Image,
-    ):
+        if isinstance(
+            rebuilt,
+            Image.Image,
+        ):
 
-        sources[
-            "Semantic Reconstruction"
-        ] = semantic_rebuilt
-
-    object_rebuilt = (
-        rebuild_layer_group(
-            "object"
-        )
-    )
-
-    if isinstance(
-        object_rebuilt,
-        Image.Image,
-    ):
-
-        sources[
-            "Object Layer Reconstruction"
-        ] = object_rebuilt
-
-    segment_rebuilt = (
-        rebuild_layer_group(
-            "segment"
-        )
-    )
-
-    if isinstance(
-        segment_rebuilt,
-        Image.Image,
-    ):
-
-        sources[
-            "Segmented Objects"
-        ] = segment_rebuilt
-
-    smart_color_layer = (
-        rebuild_layer_group(
-            "smartcolor"
-        )
-    )
-
-    if isinstance(
-        smart_color_layer,
-        Image.Image,
-    ):
-
-        sources[
-            "Extracted Color Layer"
-        ] = smart_color_layer
-
-    text_rebuilt = (
-        rebuild_layer_group(
-            "text"
-        )
-    )
-
-    if isinstance(
-        text_rebuilt,
-        Image.Image,
-    ):
-
-        sources[
-            "Text Layer Reconstruction"
-        ] = text_rebuilt
-
-    ocr_rebuilt = (
-        rebuild_layer_group(
-            "ocr"
-        )
-    )
-
-    if isinstance(
-        ocr_rebuilt,
-        Image.Image,
-    ):
-
-        sources[
-            "OCR Layer Reconstruction"
-        ] = ocr_rebuilt
+            sources[
+                source_name
+            ] = rebuilt
 
     return sources
 
 
 # =========================================================
-# OUTPUT STATE KEYS
+# OUTPUT KEYS
 # =========================================================
 
 OUTPUT_SETTING_KEYS = [
@@ -901,7 +878,6 @@ OUTPUT_SETTING_KEYS = [
     "output_maintain_ratio",
     "output_custom_width",
     "output_custom_height",
-    "output_locked_height",
     "output_dpi_mode",
     "output_dpi_preset",
     "output_custom_dpi",
@@ -915,10 +891,6 @@ OUTPUT_SETTING_KEYS = [
     "smart_export_priority",
 ]
 
-
-# =========================================================
-# CLEAR WORKSPACE
-# =========================================================
 
 def clear_workspace_state():
 
@@ -985,7 +957,7 @@ def clear_workspace_state():
 
 
 # =========================================================
-# DEFAULT OUTPUT SETTINGS
+# OUTPUT DEFAULTS
 # =========================================================
 
 def ensure_output_defaults(
@@ -998,141 +970,101 @@ def ensure_output_defaults(
         * original_height
     )
 
-    st.session_state.setdefault(
-        "output_export_source",
-        "Original Image",
-    )
+    defaults = {
+        "output_export_source":
+            "Original Image",
 
-    st.session_state.setdefault(
-        "output_export_mode",
-        "Single Format",
-    )
+        "output_export_mode":
+            "Single Format",
 
-    st.session_state.setdefault(
-        "output_single_format",
-        "PNG",
-    )
-
-    st.session_state.setdefault(
-        "output_multiple_formats",
-        [
+        "output_single_format":
             "PNG",
-            "TIFF",
-        ],
-    )
 
-    st.session_state.setdefault(
-        "output_pixel_mode",
-        "Original Size",
-    )
+        "output_multiple_formats":
+            [
+                "PNG",
+                "TIFF",
+            ],
 
-    st.session_state.setdefault(
-        "output_target_pixels",
-        max(
-            1,
-            min(
-                original_total,
-                150000,
+        "output_pixel_mode":
+            "Original Size",
+
+        "output_target_pixels":
+            max(
+                1,
+                min(
+                    original_total,
+                    150000,
+                ),
             ),
-        ),
-    )
 
-    st.session_state.setdefault(
-        "output_maintain_ratio",
-        True,
-    )
+        "output_maintain_ratio":
+            True,
 
-    st.session_state.setdefault(
-        "output_custom_width",
-        max(
-            1,
-            min(
-                int(original_width),
-                150000,
+        "output_custom_width":
+            max(
+                1,
+                min(
+                    int(original_width),
+                    150000,
+                ),
             ),
-        ),
-    )
 
-    st.session_state.setdefault(
-        "output_custom_height",
-        max(
-            1,
-            min(
-                int(original_height),
-                150000,
+        "output_custom_height":
+            max(
+                1,
+                min(
+                    int(original_height),
+                    150000,
+                ),
             ),
-        ),
-    )
 
-    st.session_state.setdefault(
-        "output_locked_height",
-        max(
-            1,
-            min(
-                int(original_height),
-                150000,
-            ),
-        ),
-    )
+        "output_dpi_mode":
+            "Preset",
 
-    st.session_state.setdefault(
-        "output_dpi_mode",
-        "Preset",
-    )
+        "output_dpi_preset":
+            300,
 
-    st.session_state.setdefault(
-        "output_dpi_preset",
-        300,
-    )
+        "output_custom_dpi":
+            300,
 
-    st.session_state.setdefault(
-        "output_custom_dpi",
-        300,
-    )
+        "output_color_mode":
+            "RGB",
 
-    st.session_state.setdefault(
-        "output_color_mode",
-        "RGB",
-    )
+        "output_resize_mode":
+            "Fit",
 
-    st.session_state.setdefault(
-        "output_resize_mode",
-        "Fit",
-    )
+        "output_quality":
+            95,
 
-    st.session_state.setdefault(
-        "output_quality",
-        95,
-    )
+        "output_webp_lossless":
+            False,
 
-    st.session_state.setdefault(
-        "output_webp_lossless",
-        False,
-    )
+        "output_png_compression":
+            6,
 
-    st.session_state.setdefault(
-        "output_png_compression",
-        6,
-    )
+        "output_tiff_compression":
+            "LZW - Lossless",
 
-    st.session_state.setdefault(
-        "output_tiff_compression",
-        "LZW - Lossless",
-    )
+        "smart_export_purpose":
+            "General Purpose",
 
-    st.session_state.setdefault(
-        "smart_export_purpose",
-        "General Purpose",
-    )
+        "smart_export_priority":
+            "Balanced",
+    }
 
-    st.session_state.setdefault(
-        "smart_export_priority",
-        "Balanced",
-    )
+    for key, value in (
+        defaults.items()
+    ):
+
+        st.session_state.setdefault(
+            key,
+            value,
+        )
 
 
 # =========================================================
-# APPLY PROJECT SETTINGS
+# PROJECT SETTINGS RESTORE
 # =========================================================
 
 def apply_loaded_project_settings():
@@ -1175,7 +1107,6 @@ def apply_loaded_project_settings():
         "Single Format",
         "Multiple Formats",
     ):
-
         export_mode = (
             "Single Format"
         )
@@ -1193,21 +1124,18 @@ def apply_loaded_project_settings():
         saved_formats,
         list,
     ):
-
         saved_formats = [
             "PNG"
         ]
 
     saved_formats = [
         item
-        for item
-        in saved_formats
+        for item in saved_formats
         if item
         in VALID_EXPORT_FORMATS
     ]
 
     if not saved_formats:
-
         saved_formats = [
             "PNG"
         ]
@@ -1230,7 +1158,6 @@ def apply_loaded_project_settings():
         "Target Total Pixels",
         "Custom Dimensions",
     ):
-
         pixel_mode = (
             "Original Size"
         )
@@ -1274,21 +1201,17 @@ def apply_loaded_project_settings():
     ] = saved_height
 
     st.session_state[
-        "output_locked_height"
-    ] = saved_height
-
-    target_pixels = settings.get(
-        "target_total_pixels",
-        saved_width
-        * saved_height,
-    )
-
-    st.session_state[
         "output_target_pixels"
     ] = max(
         1,
         min(
-            int(target_pixels),
+            int(
+                settings.get(
+                    "target_total_pixels",
+                    saved_width
+                    * saved_height,
+                )
+            ),
             150000,
         ),
     )
@@ -1325,10 +1248,6 @@ def apply_loaded_project_settings():
             "output_dpi_preset"
         ] = saved_dpi
 
-        st.session_state[
-            "output_custom_dpi"
-        ] = saved_dpi
-
     else:
 
         st.session_state[
@@ -1339,43 +1258,37 @@ def apply_loaded_project_settings():
             "output_custom_dpi"
         ] = saved_dpi
 
-    saved_color_mode = settings.get(
+    color_mode = settings.get(
         "color_mode",
         "RGB",
     )
 
-    if saved_color_mode not in (
+    if color_mode not in (
         "RGB",
         "CMYK",
         "Grayscale",
     ):
-
-        saved_color_mode = (
-            "RGB"
-        )
+        color_mode = "RGB"
 
     st.session_state[
         "output_color_mode"
-    ] = saved_color_mode
+    ] = color_mode
 
-    saved_resize_mode = settings.get(
+    resize_mode = settings.get(
         "resize_mode",
         "Fit",
     )
 
-    if saved_resize_mode not in (
+    if resize_mode not in (
         "Fit",
         "Fill & Crop",
         "Stretch",
     ):
-
-        saved_resize_mode = (
-            "Fit"
-        )
+        resize_mode = "Fit"
 
     st.session_state[
         "output_resize_mode"
-    ] = saved_resize_mode
+    ] = resize_mode
 
     st.session_state[
         "output_quality"
@@ -1454,10 +1367,7 @@ def apply_loaded_project_settings():
     )
 
     if purpose not in EXPORT_PURPOSES:
-
-        purpose = (
-            "General Purpose"
-        )
+        purpose = "General Purpose"
 
     st.session_state[
         "smart_export_purpose"
@@ -1472,10 +1382,7 @@ def apply_loaded_project_settings():
         priority
         not in SMART_EXPORT_PRIORITIES
     ):
-
-        priority = (
-            "Balanced"
-        )
+        priority = "Balanced"
 
     st.session_state[
         "smart_export_priority"
@@ -1487,7 +1394,7 @@ def apply_loaded_project_settings():
 
 
 # =========================================================
-# EDITABLE LAYER PANEL
+# LAYER PANEL
 # =========================================================
 
 def render_layer_panel(
@@ -1515,7 +1422,6 @@ def render_layer_panel(
         layers_key
         not in st.session_state
     ):
-
         return None
 
     layers = (
@@ -1541,9 +1447,7 @@ def render_layer_panel(
         layers
     ):
 
-        uid = (
-            layer["_uid"]
-        )
+        uid = layer["_uid"]
 
         with st.container(
             border=True
@@ -1564,34 +1468,30 @@ def render_layer_panel(
 
             with delete_col:
 
-                delete_clicked = (
-                    st.button(
-                        "🗑️ Delete",
-                        key=(
-                            f"delete_{uid}"
-                        ),
-                    )
-                )
+                if st.button(
+                    "🗑️ Delete",
+                    key=(
+                        f"delete_{uid}"
+                    ),
+                ):
 
-            if delete_clicked:
+                    st.session_state[
+                        layers_key
+                    ].pop(index)
 
-                st.session_state[
-                    layers_key
-                ].pop(index)
+                    st.session_state[
+                        visibility_key
+                    ].pop(index)
 
-                st.session_state[
-                    visibility_key
-                ].pop(index)
+                    st.session_state[
+                        opacity_key
+                    ].pop(index)
 
-                st.session_state[
-                    opacity_key
-                ].pop(index)
+                    st.session_state[
+                        names_key
+                    ].pop(index)
 
-                st.session_state[
-                    names_key
-                ].pop(index)
-
-                st.rerun()
+                    st.rerun()
 
             preview_col, control_col = (
                 st.columns(
@@ -1601,10 +1501,7 @@ def render_layer_panel(
 
             with preview_col:
 
-                if (
-                    "image"
-                    in layer
-                ):
+                if "image" in layer:
 
                     st.image(
                         layer["image"],
@@ -1621,9 +1518,7 @@ def render_layer_panel(
                         st.color_picker(
                             "Detected Color",
                             value=(
-                                layer[
-                                    "hex"
-                                ]
+                                layer["hex"]
                             ),
                             disabled=True,
                             key=(
@@ -1631,30 +1526,14 @@ def render_layer_panel(
                             ),
                         )
 
-                    if (
-                        "percentage"
-                        in layer
-                    ):
+                    if "percentage" in layer:
 
                         st.caption(
                             f"Area: "
                             f"{layer['percentage']}%"
                         )
 
-                    if (
-                        "pixel_count"
-                        in layer
-                    ):
-
-                        st.caption(
-                            f"Pixels: "
-                            f"{layer['pixel_count']:,}"
-                        )
-
-                elif (
-                    info_type
-                    == "semantic"
-                ):
+                elif info_type == "semantic":
 
                     st.caption(
                         f"Type: "
@@ -1676,31 +1555,13 @@ def render_layer_panel(
                         f"{layer.get('confidence', 0)}%"
                     )
 
-                    st.caption(
-                        f"Position: "
-                        f"X {layer.get('x', 0)}, "
-                        f"Y {layer.get('y', 0)}"
-                    )
-
-                    st.caption(
-                        f"Size: "
-                        f"{layer.get('width', 0)} × "
-                        f"{layer.get('height', 0)}"
-                    )
-
-                elif (
-                    info_type
-                    == "text"
-                ):
+                elif info_type == "text":
 
                     st.caption(
                         "Type: Text Region"
                     )
 
-                elif (
-                    info_type
-                    == "ocr"
-                ):
+                elif info_type == "ocr":
 
                     st.write(
                         f"**Text:** "
@@ -1730,9 +1591,7 @@ def render_layer_panel(
 
                 st.session_state[
                     names_key
-                ][index] = (
-                    layer_name
-                )
+                ][index] = layer_name
 
                 visible = (
                     st.checkbox(
@@ -1762,7 +1621,6 @@ def render_layer_panel(
                                 opacity_key
                             ][index]
                         ),
-                        step=1,
                         key=(
                             f"opacity_{uid}"
                         ),
@@ -1799,22 +1657,21 @@ st.title(
 )
 
 st.subheader(
-    "Analysis • Editable Layers • Object Recognition • "
-    "Segmentation • Color Editing • OCR • Smart Export • "
-    "Editable Projects • Professional Export"
+    "Multi-Format Input • PDF All Pages • "
+    "Analysis • Editable Layers • OCR • "
+    "Professional Export"
 )
 
 st.caption(
-    "OPEN → ANALYZE → EXTRACT → EDIT → "
-    "CHOOSE EXPORT SOURCE → SMART SETTINGS → "
-    "QUALITY CHECK → EXPORT → DOWNLOAD ZIP"
+    "JPG • PNG • WEBP • TIFF • BMP • "
+    "PDF • SVG • HEIC • HEIF"
 )
 
 st.divider()
 
 
 # =========================================================
-# 01 — OPEN IMAGE / PROJECT
+# 01 — OPEN FILE
 # =========================================================
 
 st.header(
@@ -1825,18 +1682,26 @@ st.header(
 image_tab, project_tab = (
     st.tabs(
         [
-            "🖼️ Open Image",
+            "🖼️ Open Image / PDF / SVG / HEIC",
             "📁 Open .aistudio Project",
         ]
     )
 )
 
 
+prepared_normal_uploaded_files = []
+normal_input_metadata = None
+
+
+# =========================================================
+# IMAGE INPUT
+# =========================================================
+
 with image_tab:
 
     normal_uploaded_files = (
         st.file_uploader(
-            "Drag & Drop Image Here",
+            "Drag & Drop Image or Document Here",
             type=[
                 "jpg",
                 "jpeg",
@@ -1845,28 +1710,741 @@ with image_tab:
                 "tiff",
                 "tif",
                 "bmp",
+                "pdf",
+                "svg",
+                "heic",
+                "heif",
             ],
             accept_multiple_files=True,
-            key=(
-                "normal_image_uploader"
-            ),
+            key="normal_image_uploader",
         )
     )
 
+    st.caption(
+        "Supported: JPG, JPEG, PNG, WEBP, TIFF, BMP, "
+        "PDF, SVG, HEIC and HEIF"
+    )
+
+    if normal_uploaded_files:
+
+        first_normal_file = (
+            normal_uploaded_files[0]
+        )
+
+        first_normal_bytes = (
+            first_normal_file.getvalue()
+        )
+
+        try:
+
+            first_input_info = (
+                cached_get_input_info(
+                    first_normal_bytes,
+                    first_normal_file.name,
+                )
+            )
+
+            input_type = (
+                first_input_info.get(
+                    "type",
+                    "image",
+                )
+            )
+
+            extension = (
+                first_input_info.get(
+                    "extension",
+                    "",
+                )
+            )
+
+            input_render_dpi = 150
+            selected_pdf_page = 1
+            pdf_page_mode = "Single Page"
+
+
+            # =============================================
+            # PDF
+            # =============================================
+
+            if input_type == "pdf":
+
+                page_count = int(
+                    first_input_info.get(
+                        "page_count",
+                        1,
+                    )
+                )
+
+                st.success(
+                    f"📄 PDF detected — "
+                    f"{page_count} page(s)"
+                )
+
+                pdf_page_mode = (
+                    st.radio(
+                        "PDF Page Mode",
+                        [
+                            "Single Page",
+                            "All Pages",
+                        ],
+                        horizontal=True,
+                        key="input_pdf_page_mode",
+                    )
+                )
+
+                pdf_col1, pdf_col2 = (
+                    st.columns(2)
+                )
+
+                with pdf_col2:
+
+                    input_render_dpi = (
+                        st.select_slider(
+                            "PDF Render DPI",
+                            options=(
+                                INPUT_RENDER_DPI_PRESETS
+                            ),
+                            value=150,
+                            key="input_pdf_render_dpi",
+                        )
+                    )
+
+                if (
+                    pdf_page_mode
+                    == "Single Page"
+                ):
+
+                    with pdf_col1:
+
+                        selected_pdf_page = (
+                            st.number_input(
+                                "PDF Page",
+                                min_value=1,
+                                max_value=page_count,
+                                value=1,
+                                step=1,
+                                key="input_pdf_page",
+                            )
+                        )
+
+                    with st.spinner(
+                        "Preparing selected PDF page..."
+                    ):
+
+                        prepared_first = (
+                            cached_prepare_input(
+                                first_normal_bytes,
+                                first_normal_file.name,
+                                page_number=int(
+                                    selected_pdf_page
+                                ),
+                                render_dpi=int(
+                                    input_render_dpi
+                                ),
+                            )
+                        )
+
+                    first_stem = (
+                        os.path.splitext(
+                            first_normal_file.name
+                        )[0]
+                    )
+
+                    prepared_name = (
+                        f"{first_stem}"
+                        f"_page_"
+                        f"{int(selected_pdf_page)}"
+                        f".png"
+                    )
+
+                    prepared_normal_uploaded_files.append(
+                        MemoryUploadedFile(
+                            prepared_name,
+                            prepared_first[
+                                "png_bytes"
+                            ],
+                        )
+                    )
+
+                    normal_input_metadata = {
+                        "source_filename":
+                            first_normal_file.name,
+
+                        "source_format":
+                            "PDF",
+
+                        "source_mode":
+                            prepared_first[
+                                "mode"
+                            ],
+
+                        "source_width":
+                            prepared_first[
+                                "width"
+                            ],
+
+                        "source_height":
+                            prepared_first[
+                                "height"
+                            ],
+
+                        "source_dpi":
+                            prepared_first[
+                                "dpi"
+                            ],
+
+                        "input_type":
+                            "pdf",
+
+                        "pdf_page_mode":
+                            "Single Page",
+
+                        "selected_page":
+                            int(
+                                selected_pdf_page
+                            ),
+
+                        "page_count":
+                            page_count,
+
+                        "render_dpi":
+                            int(
+                                input_render_dpi
+                            ),
+                    }
+
+                    st.info(
+                        f"Editing PDF Page "
+                        f"{int(selected_pdf_page)} "
+                        f"of {page_count}"
+                    )
+
+
+                # =========================================
+                # ALL PDF PAGES
+                # =========================================
+
+                else:
+
+                    with pdf_col1:
+
+                        st.metric(
+                            "Pages to Process",
+                            page_count,
+                        )
+
+                    if (
+                        page_count >= 10
+                        and
+                        input_render_dpi >= 300
+                    ):
+
+                        st.warning(
+                            "Large PDF + high render DPI can use "
+                            "a lot of RAM. 150 DPI is recommended "
+                            "for normal editing."
+                        )
+
+                    with st.spinner(
+                        f"Preparing all {page_count} PDF pages..."
+                    ):
+
+                        all_pages = (
+                            cached_prepare_all_pdf_pages(
+                                first_normal_bytes,
+                                render_dpi=int(
+                                    input_render_dpi
+                                ),
+                            )
+                        )
+
+                    first_stem = (
+                        os.path.splitext(
+                            first_normal_file.name
+                        )[0]
+                    )
+
+                    for page in all_pages:
+
+                        page_number = (
+                            page[
+                                "page_number"
+                            ]
+                        )
+
+                        page_name = (
+                            f"{first_stem}"
+                            f"_page_"
+                            f"{page_number}"
+                            f".png"
+                        )
+
+                        prepared_normal_uploaded_files.append(
+                            MemoryUploadedFile(
+                                page_name,
+                                page[
+                                    "png_bytes"
+                                ],
+                            )
+                        )
+
+                    if all_pages:
+
+                        first_page = (
+                            all_pages[0]
+                        )
+
+                        normal_input_metadata = {
+                            "source_filename":
+                                first_normal_file.name,
+
+                            "source_format":
+                                "PDF",
+
+                            "source_mode":
+                                first_page[
+                                    "mode"
+                                ],
+
+                            "source_width":
+                                first_page[
+                                    "width"
+                                ],
+
+                            "source_height":
+                                first_page[
+                                    "height"
+                                ],
+
+                            "source_dpi":
+                                first_page[
+                                    "dpi"
+                                ],
+
+                            "input_type":
+                                "pdf",
+
+                            "pdf_page_mode":
+                                "All Pages",
+
+                            "selected_page":
+                                1,
+
+                            "page_count":
+                                len(
+                                    all_pages
+                                ),
+
+                            "render_dpi":
+                                int(
+                                    input_render_dpi
+                                ),
+                        }
+
+                    st.success(
+                        f"✅ {len(all_pages)} PDF page(s) "
+                        f"prepared for batch export."
+                    )
+
+                    st.info(
+                        "Page 1 is used in the editor preview. "
+                        "During Original Image export, every PDF "
+                        "page will be exported separately."
+                    )
+
+                    preview_count = min(
+                        len(all_pages),
+                        6,
+                    )
+
+                    if preview_count > 0:
+
+                        st.subheader(
+                            "📄 PDF Page Preview"
+                        )
+
+                        preview_columns = (
+                            st.columns(
+                                min(
+                                    3,
+                                    preview_count,
+                                )
+                            )
+                        )
+
+                        for index in range(
+                            preview_count
+                        ):
+
+                            page = (
+                                all_pages[
+                                    index
+                                ]
+                            )
+
+                            with Image.open(
+                                io.BytesIO(
+                                    page[
+                                        "png_bytes"
+                                    ]
+                                )
+                            ) as page_image:
+
+                                preview_image = (
+                                    page_image.copy()
+                                )
+
+                            with preview_columns[
+                                index
+                                % len(
+                                    preview_columns
+                                )
+                            ]:
+
+                                st.image(
+                                    preview_image,
+                                    caption=(
+                                        f"Page "
+                                        f"{page['page_number']}"
+                                    ),
+                                    use_container_width=True,
+                                )
+
+                    if (
+                        len(all_pages)
+                        > preview_count
+                    ):
+
+                        st.caption(
+                            f"+ "
+                            f"{len(all_pages) - preview_count} "
+                            f"more page(s) prepared."
+                        )
+
+
+            # =============================================
+            # SVG
+            # =============================================
+
+            elif input_type == "svg":
+
+                st.info(
+                    "🔷 SVG detected. "
+                    "It will be rasterized for editing."
+                )
+
+                input_render_dpi = (
+                    st.select_slider(
+                        "SVG Render DPI",
+                        options=(
+                            INPUT_RENDER_DPI_PRESETS
+                        ),
+                        value=150,
+                        key="input_svg_render_dpi",
+                    )
+                )
+
+                with st.spinner(
+                    "Preparing SVG..."
+                ):
+
+                    prepared_first = (
+                        cached_prepare_input(
+                            first_normal_bytes,
+                            first_normal_file.name,
+                            page_number=1,
+                            render_dpi=int(
+                                input_render_dpi
+                            ),
+                        )
+                    )
+
+                first_stem = (
+                    os.path.splitext(
+                        first_normal_file.name
+                    )[0]
+                )
+
+                prepared_name = (
+                    f"{first_stem}.png"
+                )
+
+                prepared_normal_uploaded_files.append(
+                    MemoryUploadedFile(
+                        prepared_name,
+                        prepared_first[
+                            "png_bytes"
+                        ],
+                    )
+                )
+
+                normal_input_metadata = {
+                    "source_filename":
+                        first_normal_file.name,
+
+                    "source_format":
+                        "SVG",
+
+                    "source_mode":
+                        prepared_first[
+                            "mode"
+                        ],
+
+                    "source_width":
+                        prepared_first[
+                            "width"
+                        ],
+
+                    "source_height":
+                        prepared_first[
+                            "height"
+                        ],
+
+                    "source_dpi":
+                        prepared_first[
+                            "dpi"
+                        ],
+
+                    "input_type":
+                        "svg",
+
+                    "page_count":
+                        1,
+
+                    "render_dpi":
+                        int(
+                            input_render_dpi
+                        ),
+                }
+
+                for warning in (
+                    prepared_first.get(
+                        "warnings",
+                        [],
+                    )
+                ):
+                    st.warning(warning)
+
+
+            # =============================================
+            # NORMAL / HEIC / HEIF
+            # =============================================
+
+            else:
+
+                if extension in (
+                    ".heic",
+                    ".heif",
+                ):
+
+                    st.info(
+                        "📱 HEIC / HEIF image detected."
+                    )
+
+                with st.spinner(
+                    "Preparing image..."
+                ):
+
+                    prepared_first = (
+                        cached_prepare_input(
+                            first_normal_bytes,
+                            first_normal_file.name,
+                            page_number=1,
+                            render_dpi=150,
+                        )
+                    )
+
+                first_stem = (
+                    os.path.splitext(
+                        first_normal_file.name
+                    )[0]
+                )
+
+                prepared_name = (
+                    f"{first_stem}.png"
+                )
+
+                prepared_normal_uploaded_files.append(
+                    MemoryUploadedFile(
+                        prepared_name,
+                        prepared_first[
+                            "png_bytes"
+                        ],
+                    )
+                )
+
+                normal_input_metadata = {
+                    "source_filename":
+                        first_normal_file.name,
+
+                    "source_format":
+                        prepared_first[
+                            "format"
+                        ],
+
+                    "source_mode":
+                        prepared_first[
+                            "mode"
+                        ],
+
+                    "source_width":
+                        prepared_first[
+                            "width"
+                        ],
+
+                    "source_height":
+                        prepared_first[
+                            "height"
+                        ],
+
+                    "source_dpi":
+                        prepared_first[
+                            "dpi"
+                        ],
+
+                    "input_type":
+                        prepared_first[
+                            "type"
+                        ],
+
+                    "page_count":
+                        1,
+                }
+
+
+            # =============================================
+            # EXTRA UPLOADED FILES
+            # =============================================
+
+            if (
+                len(
+                    normal_uploaded_files
+                )
+                > 1
+            ):
+
+                st.caption(
+                    "Additional uploaded files are also "
+                    "prepared for batch export."
+                )
+
+                for extra_file in (
+                    normal_uploaded_files[
+                        1:
+                    ]
+                ):
+
+                    try:
+
+                        extra_bytes = (
+                            extra_file.getvalue()
+                        )
+
+                        extra_info = (
+                            cached_get_input_info(
+                                extra_bytes,
+                                extra_file.name,
+                            )
+                        )
+
+                        extra_type = (
+                            extra_info.get(
+                                "type",
+                                "image",
+                            )
+                        )
+
+                        extra_stem = (
+                            os.path.splitext(
+                                extra_file.name
+                            )[0]
+                        )
+
+                        if extra_type == "pdf":
+
+                            extra_result = (
+                                cached_prepare_input(
+                                    extra_bytes,
+                                    extra_file.name,
+                                    page_number=1,
+                                    render_dpi=150,
+                                )
+                            )
+
+                            extra_name = (
+                                f"{extra_stem}"
+                                f"_page_1.png"
+                            )
+
+                        else:
+
+                            extra_result = (
+                                cached_prepare_input(
+                                    extra_bytes,
+                                    extra_file.name,
+                                    page_number=1,
+                                    render_dpi=150,
+                                )
+                            )
+
+                            extra_name = (
+                                f"{extra_stem}.png"
+                            )
+
+                        prepared_normal_uploaded_files.append(
+                            MemoryUploadedFile(
+                                extra_name,
+                                extra_result[
+                                    "png_bytes"
+                                ],
+                            )
+                        )
+
+                    except Exception as extra_error:
+
+                        st.warning(
+                            f"Could not prepare "
+                            f"{extra_file.name}: "
+                            f"{extra_error}"
+                        )
+
+
+            if normal_input_metadata:
+
+                st.session_state[
+                    "normal_input_metadata"
+                ] = normal_input_metadata
+
+
+        except Exception as error:
+
+            st.error(
+                "Could not process uploaded file."
+            )
+
+            st.exception(
+                error
+            )
+
 
 # =========================================================
-# NORMAL IMAGE CHANGE
+# INPUT CHANGE
 # =========================================================
 
-if normal_uploaded_files:
+if prepared_normal_uploaded_files:
+
+    input_names = tuple(
+        file.name
+        for file in (
+            prepared_normal_uploaded_files
+        )
+    )
 
     normal_signature = (
-        normal_uploaded_files[
-            0
-        ].name,
-
+        input_names,
         hashlib.sha1(
-            normal_uploaded_files[
+            prepared_normal_uploaded_files[
                 0
             ].getvalue()
         ).hexdigest(),
@@ -1893,7 +2471,7 @@ if normal_uploaded_files:
 
 
 # =========================================================
-# PROJECT UPLOAD
+# PROJECT TAB
 # =========================================================
 
 with project_tab:
@@ -1905,16 +2483,11 @@ with project_tab:
                 "aistudio",
             ],
             accept_multiple_files=False,
-            key=(
-                "project_uploader"
-            ),
+            key="project_uploader",
         )
     )
 
-    if (
-        project_file
-        is not None
-    ):
+    if project_file is not None:
 
         try:
 
@@ -1947,20 +2520,6 @@ with project_tab:
                 "**Total Layers:** "
                 f"{project_information.get('total_layers')}"
             )
-
-            project_size = (
-                project_information.get(
-                    "original_size"
-                )
-            )
-
-            if project_size:
-
-                st.caption(
-                    f"Original Size: "
-                    f"{project_size[0]} × "
-                    f"{project_size[1]} px"
-                )
 
             if st.button(
                 "📂 Open Project",
@@ -2004,15 +2563,11 @@ with project_tab:
 
                 st.session_state[
                     "opened_project_image_bytes"
-                ] = (
-                    project_image_bytes
-                )
+                ] = project_image_bytes
 
                 st.session_state[
                     "opened_project_filename"
-                ] = (
-                    project_filename
-                )
+                ] = project_filename
 
                 group_prefixes = {
                     "color":
@@ -2088,6 +2643,7 @@ with project_tab:
                         ] = {
                             "image":
                                 edited_image,
+
                             "mask":
                                 None,
                         }
@@ -2096,21 +2652,11 @@ with project_tab:
 
                         st.session_state[
                             "smart_color_result"
-                        ] = (
-                            edited_image
-                        )
-
-                        st.session_state[
-                            "smart_color_operation"
-                        ] = (
-                            "Restored Project Edit"
-                        )
+                        ] = edited_image
 
                 st.session_state[
                     "loaded_project_settings"
-                ] = (
-                    loaded_settings
-                )
+                ] = loaded_settings
 
                 st.session_state[
                     "project_settings_applied"
@@ -2128,6 +2674,7 @@ with project_tab:
                     "active_image_signature"
                 ] = (
                     project_filename,
+
                     hashlib.sha1(
                         project_image_bytes
                     ).hexdigest(),
@@ -2138,43 +2685,13 @@ with project_tab:
         except Exception as error:
 
             st.error(
-                "Could not read this .aistudio project."
+                "Could not read this "
+                ".aistudio project."
             )
 
             st.exception(
                 error
             )
-
-
-# =========================================================
-# SWITCH BACK TO NORMAL IMAGE
-# =========================================================
-
-if (
-    normal_uploaded_files
-    and
-    st.session_state.get(
-        "active_input_mode"
-    )
-    == "project"
-):
-
-    if st.button(
-        "🖼️ Switch to Uploaded Image",
-        use_container_width=True,
-    ):
-
-        clear_workspace_state()
-
-        st.session_state[
-            "project_is_open"
-        ] = False
-
-        st.session_state[
-            "active_input_mode"
-        ] = "image"
-
-        st.rerun()
 
 
 # =========================================================
@@ -2210,15 +2727,17 @@ if (
         )
     ]
 
-elif normal_uploaded_files:
+
+elif prepared_normal_uploaded_files:
 
     uploaded_files = (
-        normal_uploaded_files
+        prepared_normal_uploaded_files
     )
 
     st.session_state[
         "active_input_mode"
     ] = "image"
+
 
 else:
 
@@ -2228,15 +2747,16 @@ else:
 if not uploaded_files:
 
     st.info(
-        "Upload an image or open an "
-        ".aistudio project to start."
+        "Upload an image, PDF, SVG, HEIC/HEIF "
+        "or open an .aistudio project."
     )
 
     st.stop()
 
 
 st.success(
-    f"{len(uploaded_files)} image(s) ready."
+    f"{len(uploaded_files)} "
+    f"prepared image/page(s) ready."
 )
 
 
@@ -2251,18 +2771,14 @@ first_bytes = (
 )
 
 
-file_hash = (
-    hashlib.sha1(
-        first_bytes
-    ).hexdigest()
-)
-
-
 current_signature = (
     uploaded_files[
         0
     ].name,
-    file_hash,
+
+    hashlib.sha1(
+        first_bytes
+    ).hexdigest(),
 )
 
 
@@ -2293,15 +2809,11 @@ with Image.open(
 
     first_image = opened.copy()
 
-    original_format = (
-        opened.format
-    )
+    prepared_format = opened.format
 
-    original_mode = (
-        opened.mode
-    )
+    prepared_mode = opened.mode
 
-    original_dpi = (
+    prepared_dpi = (
         opened.info.get(
             "dpi",
             "Not available",
@@ -2314,14 +2826,19 @@ original_width, original_height = (
 )
 
 
-if st.session_state.get(
-    "project_is_open",
-    False,
-):
-
-    st.success(
-        "📂 Editable .aistudio project is open."
+source_metadata = (
+    st.session_state.get(
+        "normal_input_metadata",
+        {},
     )
+    if (
+        st.session_state.get(
+            "active_input_mode"
+        )
+        == "image"
+    )
+    else {}
+)
 
 
 # =========================================================
@@ -2329,7 +2846,7 @@ if st.session_state.get(
 # =========================================================
 
 st.header(
-    "02 — Original Image"
+    "02 — Original / Prepared Image"
 )
 
 
@@ -2369,23 +2886,64 @@ with info_col:
     )
 
     st.write(
-        f"**Format:** {original_format}"
+        f"**Source Format:** "
+        f"{source_metadata.get('source_format', prepared_format)}"
     )
 
     st.write(
-        f"**Color Mode:** {original_mode}"
+        f"**Editing Mode:** "
+        f"{prepared_mode}"
     )
 
     st.write(
-        f"**Original DPI:** {original_dpi}"
+        f"**Source DPI:** "
+        f"{source_metadata.get('source_dpi', prepared_dpi)}"
     )
+
+
+if (
+    source_metadata.get(
+        "input_type"
+    )
+    == "pdf"
+):
+
+    pdf_mode = (
+        source_metadata.get(
+            "pdf_page_mode",
+            "Single Page",
+        )
+    )
+
+    if pdf_mode == "All Pages":
+
+        st.success(
+            f"📚 All Pages mode active — "
+            f"{source_metadata.get('page_count', len(uploaded_files))} "
+            f"PDF page(s) prepared."
+        )
+
+        st.caption(
+            "Page 1 is displayed for editing. "
+            "Choose Original Image during export to "
+            "export every PDF page separately."
+        )
+
+    else:
+
+        st.info(
+            f"PDF Page "
+            f"{source_metadata.get('selected_page', 1)} "
+            f"of "
+            f"{source_metadata.get('page_count', 1)}"
+        )
 
 
 st.divider()
 
 
 # =========================================================
-# 03 — ANALYSIS
+# 03 — IMAGE ANALYSIS
 # =========================================================
 
 st.header(
@@ -2437,29 +2995,12 @@ a4.metric(
 )
 
 
-if stats[
-    "transparency"
-]:
+if stats["transparency"]:
 
     st.info(
         "Transparency detected: "
         f"{stats['transparent_percentage']}%"
     )
-
-else:
-
-    st.caption(
-        "No transparent areas detected."
-    )
-
-
-# =========================================================
-# DOMINANT COLORS
-# =========================================================
-
-st.subheader(
-    "🎨 Dominant Colors"
-)
 
 
 dominant_colors = (
@@ -2469,13 +3010,16 @@ dominant_colors = (
 )
 
 
+st.subheader(
+    "🎨 Dominant Colors"
+)
+
+
 if dominant_colors:
 
-    columns = (
-        st.columns(
-            len(
-                dominant_colors
-            )
+    columns = st.columns(
+        len(
+            dominant_colors
         )
     )
 
@@ -2493,11 +3037,7 @@ if dominant_colors:
 
             st.color_picker(
                 f"Color {index + 1}",
-                value=(
-                    color[
-                        "hex"
-                    ]
-                ),
+                value=color["hex"],
                 disabled=True,
                 key=(
                     f"analysis_color_{index}"
@@ -2505,9 +3045,7 @@ if dominant_colors:
             )
 
             st.caption(
-                color[
-                    "hex"
-                ].upper()
+                color["hex"].upper()
             )
 
             st.caption(
@@ -2515,19 +3053,11 @@ if dominant_colors:
             )
 
 
-# =========================================================
-# SHAPES
-# =========================================================
+shapes = analysis["shapes"]
+
 
 st.subheader(
     "🔷 Shape Analysis"
-)
-
-
-shapes = (
-    analysis[
-        "shapes"
-    ]
 )
 
 
@@ -2538,30 +3068,22 @@ s1, s2, s3, s4 = (
 
 s1.metric(
     "Rectangles",
-    shapes[
-        "rectangles"
-    ],
+    shapes["rectangles"],
 )
 
 s2.metric(
     "Triangles",
-    shapes[
-        "triangles"
-    ],
+    shapes["triangles"],
 )
 
 s3.metric(
     "Circles / Curves",
-    shapes[
-        "circles_or_curves"
-    ],
+    shapes["circles_or_curves"],
 )
 
 s4.metric(
     "Other Shapes",
-    shapes[
-        "other_shapes"
-    ],
+    shapes["other_shapes"],
 )
 
 
@@ -2580,10 +3102,9 @@ st.header(
 color_layer_count = (
     st.slider(
         "Number of Color Layers",
-        min_value=2,
-        max_value=12,
-        value=6,
-        step=1,
+        2,
+        12,
+        6,
     )
 )
 
@@ -2611,16 +3132,8 @@ if st.button(
         color_layers,
     )
 
-    st.success(
-        f"{len(color_layers)} "
-        f"color layers created."
-    )
 
-
-if (
-    "color_layers"
-    in st.session_state
-):
+if "color_layers" in st.session_state:
 
     color_rebuilt = (
         render_layer_panel(
@@ -2634,34 +3147,20 @@ if (
         Image.Image,
     ):
 
-        left, right = (
-            st.columns(2)
+        st.image(
+            color_rebuilt,
+            caption=(
+                "Color Reconstruction"
+            ),
+            use_container_width=True,
         )
-
-        with left:
-
-            st.image(
-                first_image,
-                caption="Original",
-                use_container_width=True,
-            )
-
-        with right:
-
-            st.image(
-                color_rebuilt,
-                caption=(
-                    "Color Reconstruction"
-                ),
-                use_container_width=True,
-            )
 
 
 st.divider()
 
 
 # =========================================================
-# 05 — SEMANTIC LAYERS
+# 05 — SEMANTIC
 # =========================================================
 
 st.header(
@@ -2670,8 +3169,7 @@ st.header(
 
 
 st.info(
-    "Semantic separation is approximate and does not "
-    "restore original Photoshop/CorelDRAW layers."
+    "Semantic separation is approximate."
 )
 
 
@@ -2681,7 +3179,7 @@ if st.button(
 ):
 
     with st.spinner(
-        "Detecting semantic regions..."
+        "Detecting regions..."
     ):
 
         semantic_layers = (
@@ -2695,43 +3193,20 @@ if st.button(
         semantic_layers,
     )
 
-    st.success(
-        f"{len(semantic_layers)} "
-        f"semantic layers created."
+
+if "semantic_layers" in st.session_state:
+
+    render_layer_panel(
+        "semantic",
+        "semantic",
     )
-
-
-if (
-    "semantic_layers"
-    in st.session_state
-):
-
-    semantic_rebuilt = (
-        render_layer_panel(
-            "semantic",
-            "semantic",
-        )
-    )
-
-    if isinstance(
-        semantic_rebuilt,
-        Image.Image,
-    ):
-
-        st.image(
-            semantic_rebuilt,
-            caption=(
-                "Semantic Reconstruction"
-            ),
-            use_container_width=True,
-        )
 
 
 st.divider()
 
 
 # =========================================================
-# 06 — OBJECT RECOGNITION
+# 06 — OBJECT DETECTION
 # =========================================================
 
 st.header(
@@ -2742,10 +3217,10 @@ st.header(
 object_confidence = (
     st.slider(
         "Object Detection Confidence",
-        min_value=20,
-        max_value=95,
-        value=50,
-        step=5,
+        20,
+        95,
+        50,
+        5,
     )
 )
 
@@ -2753,17 +3228,15 @@ object_confidence = (
 max_objects = (
     st.slider(
         "Maximum Objects",
-        min_value=1,
-        max_value=20,
-        value=10,
-        step=1,
+        1,
+        20,
+        10,
     )
 )
 
 
 if st.button(
     "🎯 Detect & Recognize Objects",
-    type="primary",
     use_container_width=True,
 ):
 
@@ -2773,12 +3246,12 @@ if st.button(
             "Recognizing objects..."
         ):
 
-            object_result = (
+            result = (
                 create_object_layers(
                     first_image,
                     confidence_threshold=(
                         object_confidence
-                        / 100.0
+                        / 100
                     ),
                     max_objects=(
                         max_objects
@@ -2788,61 +3261,31 @@ if st.button(
 
         st.session_state[
             "object_result"
-        ] = object_result
+        ] = result
 
-        if object_result[
-            "layers"
-        ]:
+        if result["layers"]:
 
             initialize_layer_state(
                 "object",
-                object_result[
-                    "layers"
-                ],
+                result["layers"],
             )
-
-        st.success(
-            f"{object_result['object_count']} "
-            f"object(s) recognized."
-        )
 
     except Exception as error:
 
-        st.error(
-            "Object recognition failed."
-        )
-
-        st.exception(
-            error
-        )
+        st.exception(error)
 
 
-if (
-    "object_result"
-    in st.session_state
-):
-
-    result = (
-        st.session_state[
-            "object_result"
-        ]
-    )
+if "object_result" in st.session_state:
 
     st.image(
-        result[
-            "preview"
-        ],
-        caption=(
-            "Detected Objects"
-        ),
+        st.session_state[
+            "object_result"
+        ]["preview"],
         use_container_width=True,
     )
 
 
-if (
-    "object_layers"
-    in st.session_state
-):
+if "object_layers" in st.session_state:
 
     render_layer_panel(
         "object",
@@ -2862,12 +3305,6 @@ st.header(
 )
 
 
-st.info(
-    "Segmentation uses object detection + GrabCut. "
-    "Masks are approximate."
-)
-
-
 seg_tab, bg_tab = (
     st.tabs(
         [
@@ -2883,100 +3320,80 @@ with seg_tab:
     seg_confidence = (
         st.slider(
             "Segmentation Confidence",
-            min_value=20,
-            max_value=95,
-            value=50,
-            step=5,
+            20,
+            95,
+            50,
+            5,
         )
     )
 
     seg_max_objects = (
         st.slider(
             "Maximum Segmented Objects",
-            min_value=1,
-            max_value=20,
-            value=10,
+            1,
+            20,
+            10,
         )
     )
 
     seg_iterations = (
         st.slider(
             "Segmentation Refinement",
-            min_value=1,
-            max_value=10,
-            value=5,
+            1,
+            10,
+            5,
         )
     )
 
     seg_feather = (
         st.slider(
             "Edge Feather",
-            min_value=0,
-            max_value=15,
-            value=3,
+            0,
+            15,
+            3,
         )
     )
 
     if st.button(
         "✂️ Segment Detected Objects",
-        type="primary",
         use_container_width=True,
     ):
 
         try:
 
-            with st.spinner(
-                "Segmenting objects..."
-            ):
-
-                result = (
-                    create_segmented_object_layers(
-                        first_image,
-                        confidence_threshold=(
-                            seg_confidence
-                            / 100.0
-                        ),
-                        max_objects=(
-                            seg_max_objects
-                        ),
-                        iterations=(
-                            seg_iterations
-                        ),
-                        feather=(
-                            seg_feather
-                        ),
-                    )
+            result = (
+                create_segmented_object_layers(
+                    first_image,
+                    confidence_threshold=(
+                        seg_confidence
+                        / 100
+                    ),
+                    max_objects=(
+                        seg_max_objects
+                    ),
+                    iterations=(
+                        seg_iterations
+                    ),
+                    feather=(
+                        seg_feather
+                    ),
                 )
+            )
 
             st.session_state[
                 "segmentation_result"
             ] = result
 
-            if result[
-                "layers"
-            ]:
+            if result["layers"]:
 
                 initialize_layer_state(
                     "segment",
-                    result[
-                        "layers"
-                    ],
+                    result["layers"],
                 )
-
-            st.success(
-                f"{result['object_count']} "
-                f"object(s) segmented."
-            )
 
         except Exception as error:
 
-            st.error(
-                "Segmentation failed."
-            )
-
-            st.exception(
-                error
-            )
+            st.exception(error)
 
     if (
         "segmentation_result"
@@ -2986,19 +3403,11 @@ with seg_tab:
         st.image(
             st.session_state[
                 "segmentation_result"
-            ][
-                "preview"
-            ],
-            caption=(
-                "Segmentation Preview"
-            ),
+            ]["preview"],
             use_container_width=True,
         )
 
-    if (
-        "segment_layers"
-        in st.session_state
-    ):
+    if "segment_layers" in st.session_state:
 
         render_layer_panel(
             "segment",
@@ -3011,75 +3420,60 @@ with bg_tab:
     bg_margin = (
         st.slider(
             "Background Detection Margin (%)",
-            min_value=1,
-            max_value=15,
-            value=3,
+            1,
+            15,
+            3,
         )
     )
 
     bg_iterations = (
         st.slider(
-            "Background Removal Refinement",
-            min_value=1,
-            max_value=10,
-            value=5,
+            "Background Refinement",
+            1,
+            10,
+            5,
         )
     )
 
     bg_feather = (
         st.slider(
             "Background Edge Feather",
-            min_value=0,
-            max_value=15,
-            value=3,
+            0,
+            15,
+            3,
         )
     )
 
     if st.button(
         "🪄 Remove Background",
-        type="primary",
         use_container_width=True,
     ):
 
         try:
 
-            with st.spinner(
-                "Removing background..."
-            ):
-
-                result = (
-                    remove_background(
-                        first_image,
-                        margin_percent=(
-                            bg_margin
-                            / 100.0
-                        ),
-                        iterations=(
-                            bg_iterations
-                        ),
-                        feather=(
-                            bg_feather
-                        ),
-                    )
+            result = (
+                remove_background(
+                    first_image,
+                    margin_percent=(
+                        bg_margin
+                        / 100
+                    ),
+                    iterations=(
+                        bg_iterations
+                    ),
+                    feather=(
+                        bg_feather
+                    ),
                 )
+            )
 
             st.session_state[
                 "background_remove_result"
             ] = result
 
-            st.success(
-                "Background removal complete."
-            )
-
         except Exception as error:
 
-            st.error(
-                "Background removal failed."
-            )
-
-            st.exception(
-                error
-            )
+            st.exception(error)
 
     if (
         "background_remove_result"
@@ -3089,12 +3483,7 @@ with bg_tab:
         st.image(
             st.session_state[
                 "background_remove_result"
-            ][
-                "image"
-            ],
-            caption=(
-                "Background Removed"
-            ),
+            ]["image"],
             use_container_width=True,
         )
 
@@ -3103,7 +3492,7 @@ st.divider()
 
 
 # =========================================================
-# 08 — SMART COLOR EDITOR
+# 08 — COLOR EDITOR
 # =========================================================
 
 st.header(
@@ -3112,146 +3501,84 @@ st.header(
 
 
 default_source_color = (
-    dominant_colors[
-        0
-    ][
-        "hex"
-    ]
+    dominant_colors[0]["hex"]
     if dominant_colors
     else "#000000"
 )
 
 
-color_tabs = (
-    st.tabs(
-        [
-            "🎨 Replace",
-            "🫥 Remove",
-            "🧩 Extract Layer",
-            "🔀 Merge",
-        ]
-    )
+color_tabs = st.tabs(
+    [
+        "🎨 Replace",
+        "🫥 Remove",
+        "🧩 Extract",
+        "🔀 Merge",
+    ]
 )
 
 
 with color_tabs[0]:
 
-    replace_source = (
+    source_color = (
         st.color_picker(
             "Source Color",
-            value=(
-                default_source_color
-            ),
-            key=(
-                "replace_source_color"
-            ),
+            default_source_color,
         )
     )
 
-    replacement_color = (
+    new_color = (
         st.color_picker(
             "New Color",
-            value="#FF0000",
-            key=(
-                "replacement_color"
-            ),
+            "#FF0000",
         )
     )
 
-    replace_tolerance = (
+    tolerance = (
         st.slider(
             "Tolerance",
-            min_value=0,
-            max_value=255,
-            value=30,
-            key=(
-                "replace_tolerance"
-            ),
+            0,
+            255,
+            30,
         )
     )
 
-    preserve_shading = (
+    preserve = (
         st.checkbox(
-            "Preserve Light / Shadow Detail",
-            value=True,
+            "Preserve Light / Shadow",
+            True,
         )
     )
 
     source_rgb = (
         hex_to_rgb(
-            replace_source
+            source_color
         )
     )
 
-    preview = (
+    st.image(
         create_mask_preview(
             first_image,
             source_rgb,
-            replace_tolerance,
-        )
+            tolerance,
+        ),
+        use_container_width=True,
     )
-
-    selection_info = (
-        color_selection_info(
-            first_image,
-            source_rgb,
-            replace_tolerance,
-        )
-    )
-
-    c1, c2 = (
-        st.columns(2)
-    )
-
-    with c1:
-
-        st.image(
-            preview,
-            use_container_width=True,
-        )
-
-    with c2:
-
-        st.metric(
-            "Selected Pixels",
-            f"{selection_info['selected_pixels']:,}",
-        )
-
-        st.metric(
-            "Selected Area",
-            f"{selection_info['percentage']}%",
-        )
 
     if st.button(
         "🎨 Apply Color Replacement",
-        type="primary",
         use_container_width=True,
     ):
 
-        edited = (
-            replace_color(
-                first_image,
-                source_rgb,
-                hex_to_rgb(
-                    replacement_color
-                ),
-                tolerance=(
-                    replace_tolerance
-                ),
-                preserve_shading=(
-                    preserve_shading
-                ),
-            )
-        )
-
         st.session_state[
             "smart_color_result"
-        ] = edited
-
-        st.session_state[
-            "smart_color_operation"
-        ] = (
-            "Color Replacement"
+        ] = replace_color(
+            first_image,
+            source_rgb,
+            hex_to_rgb(
+                new_color
+            ),
+            tolerance=tolerance,
+            preserve_shading=preserve,
         )
 
         st.rerun()
@@ -3262,75 +3589,47 @@ with color_tabs[1]:
     remove_target = (
         st.color_picker(
             "Color to Remove",
-            value=(
-                default_source_color
-            ),
-            key=(
-                "remove_target_color"
-            ),
+            default_source_color,
+            key="remove_target",
         )
     )
 
     remove_tolerance = (
         st.slider(
             "Remove Tolerance",
-            min_value=0,
-            max_value=255,
-            value=30,
+            0,
+            255,
+            30,
         )
     )
 
     remove_feather = (
         st.slider(
-            "Transparent Edge Feather",
-            min_value=0,
-            max_value=15,
-            value=3,
+            "Remove Feather",
+            0,
+            15,
+            3,
         )
-    )
-
-    remove_rgb = (
-        hex_to_rgb(
-            remove_target
-        )
-    )
-
-    st.image(
-        create_mask_preview(
-            first_image,
-            remove_rgb,
-            remove_tolerance,
-        ),
-        use_container_width=True,
     )
 
     if st.button(
         "🫥 Remove Selected Color",
-        type="primary",
         use_container_width=True,
     ):
 
-        edited = (
-            remove_color(
-                first_image,
-                remove_rgb,
-                tolerance=(
-                    remove_tolerance
-                ),
-                feather=(
-                    remove_feather
-                ),
-            )
-        )
-
         st.session_state[
             "smart_color_result"
-        ] = edited
-
-        st.session_state[
-            "smart_color_operation"
-        ] = (
-            "Transparent Color Removal"
+        ] = remove_color(
+            first_image,
+            hex_to_rgb(
+                remove_target
+            ),
+            tolerance=(
+                remove_tolerance
+            ),
+            feather=(
+                remove_feather
+            ),
         )
 
         st.rerun()
@@ -3341,36 +3640,22 @@ with color_tabs[2]:
     extract_target = (
         st.color_picker(
             "Color to Extract",
-            value=(
-                default_source_color
-            ),
-            key=(
-                "extract_target_color"
-            ),
+            default_source_color,
+            key="extract_target",
         )
     )
 
     extract_tolerance = (
         st.slider(
             "Extraction Tolerance",
-            min_value=0,
-            max_value=255,
-            value=30,
-        )
-    )
-
-    extract_feather = (
-        st.slider(
-            "Layer Edge Feather",
-            min_value=0,
-            max_value=15,
-            value=1,
+            0,
+            255,
+            30,
         )
     )
 
     if st.button(
-        "🧩 Extract Selected Color Layer",
-        type="primary",
+        "🧩 Extract Selected Color",
         use_container_width=True,
     ):
 
@@ -3383,17 +3668,13 @@ with color_tabs[2]:
                 tolerance=(
                     extract_tolerance
                 ),
-                feather=(
-                    extract_feather
-                ),
+                feather=1,
             )
         )
 
         initialize_layer_state(
             "smartcolor",
-            [
-                layer
-            ],
+            [layer],
         )
 
         st.rerun()
@@ -3411,121 +3692,74 @@ with color_tabs[2]:
 
 with color_tabs[3]:
 
-    merge_count = (
-        st.slider(
-            "Number of Source Colors",
-            min_value=2,
-            max_value=4,
-            value=2,
+    merge_one = (
+        st.color_picker(
+            "Source Color 1",
+            default_source_color,
+            key="merge_one",
         )
     )
 
-    merge_sources = []
-
-    for index in range(
-        merge_count
-    ):
-
-        default_color = (
-            dominant_colors[
-                index
-            ][
-                "hex"
-            ]
-            if (
-                dominant_colors
-                and
-                index
-                < len(
-                    dominant_colors
-                )
-            )
-            else "#808080"
+    merge_two = (
+        st.color_picker(
+            "Source Color 2",
+            "#808080",
+            key="merge_two",
         )
-
-        value = (
-            st.color_picker(
-                f"Source Color {index + 1}",
-                value=(
-                    default_color
-                ),
-                key=(
-                    f"merge_source_{index}"
-                ),
-            )
-        )
-
-        merge_sources.append(
-            hex_to_rgb(
-                value
-            )
-        )
+    )
 
     destination = (
         st.color_picker(
-            "Destination Color",
-            value="#0000FF",
-            key=(
-                "merge_destination"
-            ),
+            "Destination",
+            "#0000FF",
         )
     )
 
     merge_tolerance = (
         st.slider(
             "Merge Tolerance",
-            min_value=0,
-            max_value=255,
-            value=30,
+            0,
+            255,
+            30,
         )
     )
 
     if st.button(
-        "🔀 Merge Selected Colors",
-        type="primary",
+        "🔀 Merge Colors",
         use_container_width=True,
     ):
 
-        merged = (
-            merge_colors(
-                first_image,
-                merge_sources,
-                hex_to_rgb(
-                    destination
-                ),
-                tolerance=(
-                    merge_tolerance
-                ),
-                preserve_shading=True,
-            )
-        )
-
         st.session_state[
             "smart_color_result"
-        ] = merged
-
-        st.session_state[
-            "smart_color_operation"
-        ] = (
-            "Color Merge"
+        ] = merge_colors(
+            first_image,
+            [
+                hex_to_rgb(
+                    merge_one
+                ),
+                hex_to_rgb(
+                    merge_two
+                ),
+            ],
+            hex_to_rgb(
+                destination
+            ),
+            tolerance=(
+                merge_tolerance
+            ),
+            preserve_shading=True,
         )
 
         st.rerun()
 
 
-if (
-    "smart_color_result"
-    in st.session_state
-):
-
-    st.subheader(
-        "🖼️ Edited Result"
-    )
+if "smart_color_result" in st.session_state:
 
     st.image(
         st.session_state[
             "smart_color_result"
         ],
+        caption="Edited Result",
         use_container_width=True,
     )
 
@@ -3534,11 +3768,11 @@ st.divider()
 
 
 # =========================================================
-# 09 — TEXT DETECTION
+# 09 — TEXT
 # =========================================================
 
 st.header(
-    "09 — 🔤 Text Detection & Layers"
+    "09 — 🔤 Text Detection"
 )
 
 
@@ -3558,9 +3792,7 @@ if st.button(
         "text_detection_result"
     ] = result
 
-    if result[
-        "individual_layers"
-    ]:
+    if result["individual_layers"]:
 
         initialize_layer_state(
             "text",
@@ -3580,17 +3812,12 @@ if (
     st.image(
         st.session_state[
             "text_detection_result"
-        ][
-            "preview"
-        ],
+        ]["preview"],
         use_container_width=True,
     )
 
 
-if (
-    "text_layers"
-    in st.session_state
-):
+if "text_layers" in st.session_state:
 
     render_layer_panel(
         "text",
@@ -3606,24 +3833,23 @@ st.divider()
 # =========================================================
 
 st.header(
-    "10 — 🔎 OCR Text Recognition"
+    "10 — 🔎 OCR"
 )
 
 
 ocr_confidence = (
     st.slider(
         "OCR Minimum Confidence",
-        min_value=10,
-        max_value=95,
-        value=30,
-        step=5,
+        10,
+        95,
+        30,
+        5,
     )
 )
 
 
 if st.button(
     "🤖 Read Text with OCR",
-    type="primary",
     use_container_width=True,
 ):
 
@@ -3638,7 +3864,7 @@ if st.button(
                     first_image,
                     confidence_threshold=(
                         ocr_confidence
-                        / 100.0
+                        / 100
                     ),
                 )
             )
@@ -3647,34 +3873,21 @@ if st.button(
             "ocr_result"
         ] = result
 
-        if result[
-            "layers"
-        ]:
+        if result["layers"]:
 
             initialize_layer_state(
                 "ocr",
-                result[
-                    "layers"
-                ],
+                result["layers"],
             )
 
         st.rerun()
 
     except Exception as error:
 
-        st.error(
-            "OCR failed."
-        )
-
-        st.exception(
-            error
-        )
+        st.exception(error)
 
 
-if (
-    "ocr_result"
-    in st.session_state
-):
+if "ocr_result" in st.session_state:
 
     result = (
         st.session_state[
@@ -3683,31 +3896,20 @@ if (
     )
 
     st.image(
-        result[
-            "preview"
-        ],
+        result["preview"],
         use_container_width=True,
     )
 
-    if result[
-        "full_text"
-    ].strip():
+    if result["full_text"].strip():
 
         st.text_area(
             "Extracted Text",
-            value=(
-                result[
-                    "full_text"
-                ]
-            ),
+            result["full_text"],
             height=180,
         )
 
 
-if (
-    "ocr_layers"
-    in st.session_state
-):
+if "ocr_layers" in st.session_state:
 
     render_layer_panel(
         "ocr",
@@ -3719,7 +3921,7 @@ st.divider()
 
 
 # =========================================================
-# OUTPUT PREPARATION
+# OUTPUT DEFAULTS
 # =========================================================
 
 ensure_output_defaults(
@@ -3731,7 +3933,7 @@ apply_loaded_project_settings()
 
 
 # =========================================================
-# 11 — EXPORT SOURCE + SMART EXPORT
+# 11 — EXPORT SOURCE
 # =========================================================
 
 st.header(
@@ -3746,40 +3948,28 @@ available_export_sources = (
 )
 
 
-available_source_names = (
-    list(
-        available_export_sources.keys()
-    )
-)
-
-
-current_export_source = (
-    st.session_state.get(
-        "output_export_source",
-        "Original Image",
-    )
+source_names = list(
+    available_export_sources.keys()
 )
 
 
 if (
-    current_export_source
-    not in available_source_names
+    st.session_state.get(
+        "output_export_source"
+    )
+    not in source_names
 ):
 
     st.session_state[
         "output_export_source"
-    ] = (
-        "Original Image"
-    )
+    ] = "Original Image"
 
 
 selected_export_source = (
     st.selectbox(
         "Choose Final Export Source",
-        available_source_names,
-        key=(
-            "output_export_source"
-        ),
+        source_names,
+        key="output_export_source",
     )
 )
 
@@ -3791,65 +3981,27 @@ export_source_image = (
 )
 
 
-st.caption(
-    "The selected image will be used for Smart Export, "
-    "Quality Check and final export."
+st.image(
+    export_source_image,
+    caption=selected_export_source,
+    use_container_width=True,
 )
-
-
-source_preview_col, source_info_col = (
-    st.columns(
-        [2, 1]
-    )
-)
-
-
-with source_preview_col:
-
-    st.image(
-        export_source_image,
-        caption=(
-            selected_export_source
-        ),
-        use_container_width=True,
-    )
-
-
-with source_info_col:
-
-    source_width, source_height = (
-        export_source_image.size
-    )
-
-    st.metric(
-        "Source Width",
-        f"{source_width:,} px",
-    )
-
-    st.metric(
-        "Source Height",
-        f"{source_height:,} px",
-    )
-
-    st.metric(
-        "Source Mode",
-        export_source_image.mode,
-    )
 
 
 if (
+    source_metadata.get(
+        "pdf_page_mode"
+    )
+    == "All Pages"
+    and
     selected_export_source
     != "Original Image"
-    and
-    len(
-        uploaded_files
-    )
-    > 1
 ):
 
-    st.info(
-        "Edited sources belong to the active first image. "
-        "Original Image can still be batch exported."
+    st.warning(
+        "All PDF pages are batch exported only when "
+        "'Original Image' is selected. Edited sources "
+        "currently apply to Page 1 only."
     )
 
 
@@ -3862,39 +4014,29 @@ st.subheader(
 )
 
 
-st.caption(
-    "The recommendation engine is rules-based and "
-    "uses image properties plus the selected purpose."
-)
-
-
-smart_col1, smart_col2 = (
+smart1, smart2 = (
     st.columns(2)
 )
 
 
-with smart_col1:
+with smart1:
 
     smart_purpose = (
         st.selectbox(
             "Export Purpose",
             EXPORT_PURPOSES,
-            key=(
-                "smart_export_purpose"
-            ),
+            key="smart_export_purpose",
         )
     )
 
 
-with smart_col2:
+with smart2:
 
     smart_priority = (
         st.selectbox(
-            "File Size / Quality Priority",
+            "Priority",
             SMART_EXPORT_PRIORITIES,
-            key=(
-                "smart_export_priority"
-            ),
+            key="smart_export_priority",
         )
     )
 
@@ -3904,223 +4046,53 @@ try:
     recommendation = (
         recommend_export_settings(
             export_source_image,
-            purpose=(
-                smart_purpose
-            ),
+            purpose=smart_purpose,
             file_size_priority=(
                 smart_priority
             ),
         )
     )
 
-    rec1, rec2, rec3, rec4 = (
+    r1, r2, r3, r4 = (
         st.columns(4)
     )
 
-    rec1.metric(
+    r1.metric(
         "Format",
-        recommendation[
-            "format"
-        ],
+        recommendation["format"],
     )
 
-    rec2.metric(
+    r2.metric(
         "DPI",
-        recommendation[
-            "dpi"
-        ],
+        recommendation["dpi"],
     )
 
-    rec3.metric(
+    r3.metric(
         "Color Mode",
         recommendation[
             "color_mode"
         ],
     )
 
-    rec4.metric(
+    r4.metric(
         "Quality",
-        recommendation[
-            "quality"
-        ],
+        recommendation["quality"],
     )
 
     st.info(
-        recommendation[
-            "reason"
-        ]
-    )
-
-    resolution = (
-        recommendation[
-            "resolution_analysis"
-        ]
-    )
-
-    st.write(
-        "**Resolution Check:** "
-        f"{resolution['level']} — "
-        f"{resolution['message']}"
+        recommendation["reason"]
     )
 
     for warning in (
-        recommendation[
-            "warnings"
-        ]
+        recommendation["warnings"]
     ):
-
-        st.warning(
-            warning
-        )
-
-    if st.button(
-        "✨ Apply Recommended Settings",
-        type="primary",
-        use_container_width=True,
-    ):
-
-        recommended_format = (
-            recommendation[
-                "format"
-            ]
-        )
-
-        recommended_dpi = int(
-            recommendation[
-                "dpi"
-            ]
-        )
-
-        st.session_state[
-            "output_export_mode"
-        ] = (
-            "Single Format"
-        )
-
-        st.session_state[
-            "output_single_format"
-        ] = (
-            recommended_format
-        )
-
-        st.session_state[
-            "output_multiple_formats"
-        ] = [
-            recommended_format
-        ]
-
-        if (
-            recommended_dpi
-            in DPI_PRESETS
-        ):
-
-            st.session_state[
-                "output_dpi_mode"
-            ] = "Preset"
-
-            st.session_state[
-                "output_dpi_preset"
-            ] = recommended_dpi
-
-            st.session_state[
-                "output_custom_dpi"
-            ] = recommended_dpi
-
-        else:
-
-            st.session_state[
-                "output_dpi_mode"
-            ] = "Custom"
-
-            st.session_state[
-                "output_custom_dpi"
-            ] = recommended_dpi
-
-        st.session_state[
-            "output_color_mode"
-        ] = (
-            recommendation[
-                "color_mode"
-            ]
-        )
-
-        st.session_state[
-            "output_resize_mode"
-        ] = (
-            recommendation[
-                "resize_mode"
-            ]
-        )
-
-        st.session_state[
-            "output_quality"
-        ] = int(
-            recommendation[
-                "quality"
-            ]
-        )
-
-        st.session_state[
-            "output_webp_lossless"
-        ] = bool(
-            recommendation[
-                "webp_lossless"
-            ]
-        )
-
-        st.session_state[
-            "output_png_compression"
-        ] = int(
-            recommendation[
-                "png_compression"
-            ]
-        )
-
-        tiff_reverse = {
-            "tiff_lzw":
-                "LZW - Lossless",
-
-            "tiff_adobe_deflate":
-                "Deflate - Lossless",
-
-            "raw":
-                "Uncompressed",
-        }
-
-        st.session_state[
-            "output_tiff_compression"
-        ] = (
-            tiff_reverse.get(
-                recommendation[
-                    "tiff_compression"
-                ],
-                "LZW - Lossless",
-            )
-        )
-
-        for key in [
-            "quality_result",
-            "quality_signature",
-            "professional_export_results",
-        ]:
-
-            if key in st.session_state:
-
-                del st.session_state[
-                    key
-                ]
-
-        st.rerun()
-
+        st.warning(warning)
 
 except Exception as error:
 
-    st.error(
-        "Smart Export recommendation failed."
-    )
-
-    st.exception(
-        error
+    st.warning(
+        f"Smart recommendation unavailable: "
+        f"{error}"
     )
 
 
@@ -4128,7 +4100,7 @@ st.divider()
 
 
 # =========================================================
-# 12 — PROFESSIONAL OUTPUT SETTINGS
+# 12 — OUTPUT SETTINGS
 # =========================================================
 
 st.header(
@@ -4144,25 +4116,18 @@ export_mode = (
             "Multiple Formats",
         ],
         horizontal=True,
-        key=(
-            "output_export_mode"
-        ),
+        key="output_export_mode",
     )
 )
 
 
-if (
-    export_mode
-    == "Single Format"
-):
+if export_mode == "Single Format":
 
     selected_formats = [
         st.selectbox(
             "Output Format",
             VALID_EXPORT_FORMATS,
-            key=(
-                "output_single_format"
-            ),
+            key="output_single_format",
         )
     ]
 
@@ -4170,30 +4135,20 @@ else:
 
     selected_formats = (
         st.multiselect(
-            "Select Output Formats",
+            "Output Formats",
             VALID_EXPORT_FORMATS,
-            key=(
-                "output_multiple_formats"
-            ),
+            key="output_multiple_formats",
         )
     )
 
 
-if (
-    "PSD (Flattened)"
-    in selected_formats
-):
+if "PSD (Flattened)" in selected_formats:
 
     st.info(
-        "PSD export is flattened. It opens as a PSD file, "
-        "but does not contain Photoshop-style editable layers. "
-        "Use .aistudio to preserve this app's editable layers."
+        "PSD output is flattened. "
+        "It does not contain original Photoshop layers."
     )
 
-
-# =========================================================
-# PIXEL MODE
-# =========================================================
 
 pixel_mode = (
     st.selectbox(
@@ -4203,10 +4158,13 @@ pixel_mode = (
             "Target Total Pixels",
             "Custom Dimensions",
         ],
-        key=(
-            "output_pixel_mode"
-        ),
+        key="output_pixel_mode",
     )
+)
+
+
+source_width, source_height = (
+    export_source_image.size
 )
 
 
@@ -4226,29 +4184,10 @@ maintain_ratio = (
 )
 
 
-source_width, source_height = (
-    export_source_image.size
-)
+if pixel_mode == "Original Size":
 
-
-if (
-    pixel_mode
-    == "Original Size"
-):
-
-    target_width = (
-        source_width
-    )
-
-    target_height = (
-        source_height
-    )
-
-    st.info(
-        f"Selected Source Size: "
-        f"{target_width:,} × "
-        f"{target_height:,} px"
-    )
+    target_width = source_width
+    target_height = source_height
 
 
 elif (
@@ -4259,34 +4198,21 @@ elif (
     target_total_pixels = (
         st.slider(
             "Target Total Pixels",
-            min_value=1,
-            max_value=150000,
-            step=1,
-            key=(
-                "output_target_pixels"
-            ),
+            1,
+            150000,
+            key="output_target_pixels",
         )
     )
 
-    target_width, target_height = (
-        target_pixels_to_dimensions(
-            (
-                source_width,
-                source_height,
-            ),
-            target_total_pixels,
-        )
-    )
-
-    st.success(
-        f"Calculated Dimensions: "
-        f"{target_width:,} × "
-        f"{target_height:,} px"
-    )
-
-    st.caption(
-        f"Actual Total Pixels: "
-        f"{target_width * target_height:,}"
+    (
+        target_width,
+        target_height,
+    ) = target_pixels_to_dimensions(
+        (
+            source_width,
+            source_height,
+        ),
+        target_total_pixels,
     )
 
 
@@ -4301,9 +4227,7 @@ else:
         )
     )
 
-    d1, d2 = (
-        st.columns(2)
-    )
+    d1, d2 = st.columns(2)
 
     with d1:
 
@@ -4313,9 +4237,7 @@ else:
                 min_value=1,
                 max_value=150000,
                 step=1,
-                key=(
-                    "output_custom_width"
-                ),
+                key="output_custom_width",
             )
         )
 
@@ -4329,32 +4251,15 @@ else:
                 source_width,
                 source_height,
             ),
-            int(
-                custom_width
-            ),
+            int(custom_width),
         )
 
         with d2:
 
-            st.number_input(
-                "Height (px)",
-                min_value=1,
-                max_value=150000,
-                value=int(
-                    target_height
-                ),
-                step=1,
-                disabled=True,
-                key=(
-                    "output_locked_height"
-                ),
+            st.metric(
+                "Height (px) 🔒",
+                f"{target_height:,}",
             )
-
-        st.info(
-            f"🔒 Aspect Ratio Locked: "
-            f"{target_width:,} × "
-            f"{target_height:,} px"
-        )
 
     else:
 
@@ -4366,9 +4271,7 @@ else:
                     min_value=1,
                     max_value=150000,
                     step=1,
-                    key=(
-                        "output_custom_height"
-                    ),
+                    key="output_custom_height",
                 )
             )
 
@@ -4380,21 +4283,10 @@ else:
             custom_height
         )
 
-        st.success(
-            f"🔓 Custom Dimensions: "
-            f"{target_width:,} × "
-            f"{target_height:,} px"
-        )
-
 
 # =========================================================
 # DPI
 # =========================================================
-
-st.subheader(
-    "🖨️ Resolution / DPI"
-)
-
 
 dpi_mode = (
     st.radio(
@@ -4404,27 +4296,18 @@ dpi_mode = (
             "Custom",
         ],
         horizontal=True,
-        key=(
-            "output_dpi_mode"
-        ),
+        key="output_dpi_mode",
     )
 )
 
 
-if (
-    dpi_mode
-    == "Preset"
-):
+if dpi_mode == "Preset":
 
     dpi = (
         st.select_slider(
             "DPI",
-            options=(
-                DPI_PRESETS
-            ),
-            key=(
-                "output_dpi_preset"
-            ),
+            options=DPI_PRESETS,
+            key="output_dpi_preset",
         )
     )
 
@@ -4433,12 +4316,9 @@ else:
     dpi = (
         st.number_input(
             "Custom DPI",
-            min_value=72,
-            max_value=1200,
-            step=1,
-            key=(
-                "output_custom_dpi"
-            ),
+            72,
+            1200,
+            key="output_custom_dpi",
         )
     )
 
@@ -4455,35 +4335,17 @@ color_mode = (
             "CMYK",
             "Grayscale",
         ],
-        key=(
-            "output_color_mode"
-        ),
+        key="output_color_mode",
     )
 )
 
 
-if (
-    color_mode
-    == "CMYK"
-):
+if color_mode == "CMYK":
 
     st.info(
-        "Current CMYK conversion is basic Pillow mode conversion. "
-        "For professional printing, confirm the required ICC profile "
-        "with your printer."
-    )
-
-
-if (
-    "PSD (Flattened)"
-    in selected_formats
-    and
-    color_mode != "RGB"
-):
-
-    st.warning(
-        "Current flattened PSD exporter saves the PSD image in RGB. "
-        "The selected CMYK/Grayscale mode does not change PSD output."
+        "CMYK currently uses basic Pillow conversion. "
+        "Professional ICC-based color management is not "
+        "implemented yet."
     )
 
 
@@ -4499,131 +4361,50 @@ resize_mode = (
             "Fill & Crop",
             "Stretch",
         ],
-        key=(
-            "output_resize_mode"
-        ),
+        key="output_resize_mode",
     )
 )
 
 
-# =========================================================
-# QUALITY
-# =========================================================
-
-quality = int(
-    st.session_state.get(
-        "output_quality",
-        95,
+quality = (
+    st.slider(
+        "JPEG / WebP Quality",
+        1,
+        100,
+        key="output_quality",
     )
 )
 
 
-if (
-    "JPEG"
-    in selected_formats
-    or
-    "WEBP"
-    in selected_formats
-):
-
-    quality = (
-        st.slider(
-            "JPEG / WebP Quality",
-            min_value=1,
-            max_value=100,
-            key=(
-                "output_quality"
-            ),
-        )
-    )
-
-
-# =========================================================
-# WEBP
-# =========================================================
-
-webp_lossless = bool(
-    st.session_state.get(
-        "output_webp_lossless",
-        False,
+webp_lossless = (
+    st.checkbox(
+        "WebP Lossless",
+        key="output_webp_lossless",
     )
 )
 
 
-if (
-    "WEBP"
-    in selected_formats
-):
-
-    webp_lossless = (
-        st.checkbox(
-            "WebP Lossless",
-            key=(
-                "output_webp_lossless"
-            ),
-        )
-    )
-
-
-# =========================================================
-# PNG
-# =========================================================
-
-png_compress_level = int(
-    st.session_state.get(
-        "output_png_compression",
-        6,
+png_compress_level = (
+    st.slider(
+        "PNG Compression",
+        0,
+        9,
+        key="output_png_compression",
     )
 )
 
-
-if (
-    "PNG"
-    in selected_formats
-):
-
-    png_compress_level = (
-        st.slider(
-            "PNG Compression",
-            min_value=0,
-            max_value=9,
-            key=(
-                "output_png_compression"
-            ),
-        )
-    )
-
-
-# =========================================================
-# TIFF
-# =========================================================
 
 tiff_compression_name = (
-    st.session_state.get(
-        "output_tiff_compression",
-        "LZW - Lossless",
+    st.selectbox(
+        "TIFF Compression",
+        [
+            "LZW - Lossless",
+            "Deflate - Lossless",
+            "Uncompressed",
+        ],
+        key="output_tiff_compression",
     )
 )
-
-
-if (
-    "TIFF"
-    in selected_formats
-):
-
-    tiff_compression_name = (
-        st.selectbox(
-            "TIFF Compression",
-            [
-                "LZW - Lossless",
-                "Deflate - Lossless",
-                "Uncompressed",
-            ],
-            key=(
-                "output_tiff_compression"
-            ),
-        )
-    )
 
 
 tiff_map = {
@@ -4639,85 +4420,41 @@ tiff_map = {
 
 
 tiff_compression = (
-    tiff_map.get(
-        tiff_compression_name,
-        "tiff_lzw",
-    )
+    tiff_map[
+        tiff_compression_name
+    ]
 )
 
-
-# =========================================================
-# OUTPUT INFO
-# =========================================================
 
 total_output_pixels = (
-    int(
-        target_width
-    )
-    *
-    int(
-        target_height
-    )
+    int(target_width)
+    * int(target_height)
 )
 
 
-o1, o2, o3, o4 = (
+m1, m2, m3, m4 = (
     st.columns(4)
 )
 
 
-o1.metric(
+m1.metric(
     "Width",
-    f"{target_width:,} px",
+    f"{target_width:,}",
 )
 
-o2.metric(
+m2.metric(
     "Height",
-    f"{target_height:,} px",
+    f"{target_height:,}",
 )
 
-o3.metric(
-    "Total Pixels",
+m3.metric(
+    "Pixels",
     f"{total_output_pixels:,}",
 )
 
-o4.metric(
+m4.metric(
     "DPI",
     dpi,
-)
-
-
-print_width = (
-    target_width
-    / dpi
-)
-
-print_height = (
-    target_height
-    / dpi
-)
-
-
-p1, p2 = (
-    st.columns(2)
-)
-
-
-p1.metric(
-    "Print Size (inch)",
-    (
-        f"{print_width:.2f} × "
-        f"{print_height:.2f}"
-    ),
-)
-
-
-p2.metric(
-    "Print Size (cm)",
-    (
-        f"{print_width * 2.54:.2f} × "
-        f"{print_height * 2.54:.2f}"
-    ),
 )
 
 
@@ -4731,17 +4468,8 @@ output_too_large = (
 if output_too_large:
 
     st.error(
-        "Selected output is too large for safe processing."
-    )
-
-elif (
-    total_output_pixels
-    > 100_000_000
-):
-
-    st.warning(
-        "Very large output selected. "
-        "This can require significant RAM."
+        "Selected dimensions are too large "
+        "for safe processing."
     )
 
 
@@ -4772,19 +4500,14 @@ project_name = (
 
 
 project_settings = {
-
     "export_source":
         selected_export_source,
 
     "target_width":
-        int(
-            target_width
-        ),
+        int(target_width),
 
     "target_height":
-        int(
-            target_height
-        ),
+        int(target_height),
 
     "target_total_pixels":
         int(
@@ -4797,9 +4520,7 @@ project_settings = {
         ),
 
     "dpi":
-        int(
-            dpi
-        ),
+        int(dpi),
 
     "color_mode":
         color_mode,
@@ -4814,9 +4535,7 @@ project_settings = {
         selected_formats,
 
     "quality":
-        int(
-            quality
-        ),
+        int(quality),
 
     "png_compress_level":
         int(
@@ -4843,7 +4562,6 @@ project_settings = {
 
 
 project_layer_groups = {
-
     name:
         collect_project_layers(
             name
@@ -4862,12 +4580,12 @@ project_layer_groups = {
 
 
 project_layer_groups = {
-
     name:
         layers
 
-    for name, layers
-    in project_layer_groups.items()
+    for name, layers in (
+        project_layer_groups.items()
+    )
 
     if layers
 }
@@ -4915,9 +4633,7 @@ try:
 
     project_bytes = (
         save_project(
-            original_image=(
-                first_image
-            ),
+            original_image=first_image,
             original_filename=(
                 uploaded_files[
                     0
@@ -4937,9 +4653,7 @@ try:
 
     st.download_button(
         "💾 Save .aistudio Project",
-        data=(
-            project_bytes
-        ),
+        data=project_bytes,
         file_name=(
             f"{project_name.strip() or 'AI_Image_Project'}"
             f".aistudio"
@@ -4952,12 +4666,9 @@ try:
 
 except Exception as error:
 
-    st.error(
-        "Project file could not be prepared."
-    )
-
-    st.exception(
-        error
+    st.warning(
+        f"Project could not be prepared: "
+        f"{error}"
     )
 
 
@@ -4973,21 +4684,14 @@ st.header(
 )
 
 
-st.caption(
-    "Rules-based preflight for the currently selected export source."
-)
-
-
 quality_format = (
-    selected_formats[
-        0
-    ]
+    selected_formats[0]
     if selected_formats
     else "PNG"
 )
 
 
-quality_check_internal_format = (
+internal_quality_format = (
     "TIFF"
     if (
         quality_format
@@ -4997,108 +4701,42 @@ quality_check_internal_format = (
 )
 
 
-if (
-    quality_format
-    == "PSD (Flattened)"
-):
-
-    st.info(
-        "PSD preflight uses TIFF-compatible raster checks. "
-        "The final PSD remains flattened."
-    )
-
-
-quality_signature = (
-    selected_export_source,
-    int(
-        target_width
-    ),
-    int(
-        target_height
-    ),
-    int(
-        dpi
-    ),
-    tuple(
-        selected_formats
-    ),
-    color_mode,
-    resize_mode,
-)
-
-
 if st.button(
     "🔎 Run Professional Quality Check",
-    type="primary",
     use_container_width=True,
 ):
 
-    if not selected_formats:
+    try:
 
-        st.warning(
-            "Select at least one output format."
+        quality_result = (
+            run_quality_check(
+                export_source_image,
+                target_width=(
+                    target_width
+                ),
+                target_height=(
+                    target_height
+                ),
+                dpi=dpi,
+                output_format=(
+                    internal_quality_format
+                ),
+                target_color_mode=(
+                    color_mode
+                ),
+            )
         )
 
-    elif output_too_large:
+        st.session_state[
+            "quality_result"
+        ] = quality_result
 
-        st.error(
-            "Output dimensions are too large."
-        )
+    except Exception as error:
 
-    else:
-
-        try:
-
-            with st.spinner(
-                "Checking final export source..."
-            ):
-
-                result = (
-                    run_quality_check(
-                        export_source_image,
-                        target_width=(
-                            target_width
-                        ),
-                        target_height=(
-                            target_height
-                        ),
-                        dpi=(
-                            dpi
-                        ),
-                        output_format=(
-                            quality_check_internal_format
-                        ),
-                        target_color_mode=(
-                            color_mode
-                        ),
-                    )
-                )
-
-            st.session_state[
-                "quality_result"
-            ] = result
-
-            st.session_state[
-                "quality_signature"
-            ] = (
-                quality_signature
-            )
-
-        except Exception as error:
-
-            st.error(
-                "Quality check failed."
-            )
-
-            st.exception(
-                error
-            )
+        st.exception(error)
 
 
-if (
-    "quality_result"
-    in st.session_state
-):
+if "quality_result" in st.session_state:
 
     result = (
         st.session_state[
@@ -5106,101 +4744,53 @@ if (
         ]
     )
 
-    if (
-        st.session_state.get(
-            "quality_signature"
-        )
-        != quality_signature
-    ):
-
-        st.warning(
-            "Export source or settings changed. "
-            "Run Quality Check again."
-        )
-
     status = (
         result[
             "overall_status"
         ]
     )
 
-    if (
-        status
-        == "READY"
-    ):
+    if status == "READY":
 
         st.success(
-            "✅ READY FOR EXPORT — "
-            f"{result['overall_message']}"
+            result[
+                "overall_message"
+            ]
         )
 
-    elif (
-        status
-        == "CHECK"
-    ):
+    elif status == "CHECK":
 
         st.warning(
-            "⚠️ CHECK BEFORE EXPORT — "
-            f"{result['overall_message']}"
+            result[
+                "overall_message"
+            ]
         )
 
     else:
 
         st.error(
-            "🔴 REVIEW RECOMMENDED — "
-            f"{result['overall_message']}"
+            result[
+                "overall_message"
+            ]
         )
 
-    q1, q2, q3 = (
-        st.columns(3)
-    )
+    for check in result["checks"]:
 
-    q1.metric(
-        "Status",
-        status,
-    )
+        st.write(
+            f"**{check['status']} — "
+            f"{check['title']}**"
+        )
 
-    q2.metric(
-        "Passed",
-        result[
-            "pass_count"
-        ],
-    )
-
-    q3.metric(
-        "Warnings",
-        result[
-            "warning_count"
-        ],
-    )
-
-    for check in (
-        result[
-            "checks"
-        ]
-    ):
-
-        with st.container(
-            border=True
-        ):
-
-            st.write(
-                f"**{check['status']} — "
-                f"{check['title']}**"
-            )
-
-            st.write(
-                check[
-                    "message"
-                ]
-            )
+        st.write(
+            check["message"]
+        )
 
 
 st.divider()
 
 
 # =========================================================
-# 15 — PROFESSIONAL EXPORT
+# 15 — EXPORT
 # =========================================================
 
 st.header(
@@ -5208,11 +4798,9 @@ st.header(
 )
 
 
-st.write(
-    "**Final Export Source:** "
-    f"{selected_export_source}"
-)
-
+# =========================================================
+# BUILD EXPORT JOBS
+# =========================================================
 
 if (
     selected_export_source
@@ -5221,9 +4809,7 @@ if (
 
     export_jobs = []
 
-    for uploaded_file in (
-        uploaded_files
-    ):
+    for uploaded_file in uploaded_files:
 
         try:
 
@@ -5233,9 +4819,7 @@ if (
                 )
             ) as opened:
 
-                image = (
-                    opened.copy()
-                )
+                image = opened.copy()
 
             base_name = (
                 os.path.splitext(
@@ -5261,7 +4845,7 @@ if (
 
 else:
 
-    original_base_name = (
+    original_base = (
         os.path.splitext(
             uploaded_files[
                 0
@@ -5277,51 +4861,63 @@ else:
 
     export_jobs = [
         (
-            f"{original_base_name}_{suffix}",
+            f"{original_base}_{suffix}",
             export_source_image,
         )
     ]
 
 
-export_button = (
-    st.button(
-        "🚀 Export Final Image(s)",
-        type="primary",
-        use_container_width=True,
-        disabled=(
-            not selected_formats
-            or
-            output_too_large
-            or
-            len(export_jobs) == 0
-        ),
+if (
+    source_metadata.get(
+        "pdf_page_mode"
     )
-)
+    == "All Pages"
+    and
+    selected_export_source
+    == "Original Image"
+):
+
+    st.success(
+        f"📚 Batch PDF Export Ready: "
+        f"{len(export_jobs)} page(s)"
+    )
 
 
-if export_button:
+if selected_formats:
+
+    st.write(
+        f"**Jobs:** "
+        f"{len(export_jobs)} image/page(s) × "
+        f"{len(selected_formats)} format(s) = "
+        f"{len(export_jobs) * len(selected_formats)} output file(s)"
+    )
+
+
+if st.button(
+    "🚀 Export Final Image(s)",
+    type="primary",
+    use_container_width=True,
+    disabled=(
+        not selected_formats
+        or
+        output_too_large
+        or
+        len(export_jobs) == 0
+    ),
+):
 
     export_results = []
 
     total_jobs = (
-        len(
-            export_jobs
-        )
-        *
-        len(
-            selected_formats
-        )
+        len(export_jobs)
+        * len(selected_formats)
     )
 
-    completed_jobs = 0
+    completed = 0
 
-    progress = (
-        st.progress(
-            0,
-            text=(
-                "Preparing exports..."
-            ),
-        )
+    progress = st.progress(
+        0,
+        text="Preparing exports...",
     )
 
     for (
@@ -5333,10 +4929,10 @@ if export_button:
             selected_formats
         ):
 
-            completed_jobs += 1
+            completed += 1
 
             progress.progress(
-                completed_jobs
+                completed
                 / total_jobs,
                 text=(
                     f"Exporting "
@@ -5347,10 +4943,6 @@ if export_button:
 
             try:
 
-                # =========================================
-                # PSD FLATTENED EXPORT
-                # =========================================
-
                 if (
                     export_format
                     == "PSD (Flattened)"
@@ -5358,53 +4950,33 @@ if export_button:
 
                     export_result = (
                         export_flattened_psd(
-                            image=(
-                                source_image
-                            ),
-                            width=(
-                                target_width
-                            ),
-                            height=(
-                                target_height
-                            ),
+                            image=source_image,
+                            width=target_width,
+                            height=target_height,
                             resize_mode=(
                                 resize_mode
                             ),
                         )
                     )
 
-                # =========================================
-                # NORMAL EXPORT
-                # =========================================
-
                 else:
 
                     export_result = (
                         export_image(
-                            image=(
-                                source_image
-                            ),
+                            image=source_image,
                             output_format=(
                                 export_format
                             ),
-                            width=(
-                                target_width
-                            ),
-                            height=(
-                                target_height
-                            ),
-                            dpi=(
-                                dpi
-                            ),
+                            width=target_width,
+                            height=target_height,
+                            dpi=dpi,
                             color_mode=(
                                 color_mode
                             ),
                             resize_mode=(
                                 resize_mode
                             ),
-                            quality=(
-                                quality
-                            ),
+                            quality=quality,
                             tiff_compression=(
                                 tiff_compression
                             ),
@@ -5441,16 +5013,14 @@ if export_button:
                         "success":
                             False,
 
-                        "format":
-                            export_format,
-
                         "input":
                             source_name,
 
+                        "format":
+                            export_format,
+
                         "error":
-                            str(
-                                error
-                            ),
+                            str(error),
                     }
                 )
 
@@ -5466,7 +5036,7 @@ if export_button:
 
 
 # =========================================================
-# 16 — EXPORT RESULTS
+# 16 — INDIVIDUAL DOWNLOADS
 # =========================================================
 
 if (
@@ -5475,7 +5045,7 @@ if (
 ):
 
     st.header(
-        "16 — 📦 Export Results"
+        "16 — ⬇️ Export Results"
     )
 
     results = (
@@ -5484,110 +5054,45 @@ if (
         ]
     )
 
-    success_count = sum(
-        1
-        for result
-        in results
+    successful = [
+        result
+        for result in results
         if result.get(
             "success"
         )
-    )
+    ]
 
-    failure_count = (
-        len(
-            results
+    failed = [
+        result
+        for result in results
+        if not result.get(
+            "success"
         )
-        -
-        success_count
-    )
+    ]
 
-    r1, r2 = (
+    e1, e2 = (
         st.columns(2)
     )
 
-    r1.metric(
+    e1.metric(
         "Successful Exports",
-        success_count,
+        len(successful),
     )
 
-    r2.metric(
+    e2.metric(
         "Failed Exports",
-        failure_count,
+        len(failed),
     )
 
 
     # =====================================================
-    # DOWNLOAD ALL AS ZIP
+    # NO ZIP
     # =====================================================
 
-    if success_count > 0:
+    st.caption(
+        "Each exported file can be downloaded separately."
+    )
 
-        try:
-
-            exports_zip = (
-                create_exports_zip(
-                    results
-                )
-            )
-
-            original_zip_name = (
-                os.path.splitext(
-                    uploaded_files[
-                        0
-                    ].name
-                )[0]
-            )
-
-            safe_zip_name = (
-                safe_filename_part(
-                    original_zip_name
-                )
-            )
-
-            if not safe_zip_name:
-
-                safe_zip_name = (
-                    "ai_image"
-                )
-
-            zip_file_name = (
-                f"{safe_zip_name}_exports.zip"
-            )
-
-            st.download_button(
-                "📦 Download All Successful Exports as ZIP",
-                data=(
-                    exports_zip
-                ),
-                file_name=(
-                    zip_file_name
-                ),
-                mime="application/zip",
-                use_container_width=True,
-                key=(
-                    "download_all_exports_zip"
-                ),
-            )
-
-            st.caption(
-                f"ZIP contains "
-                f"{success_count} successful export(s)."
-            )
-
-        except Exception as error:
-
-            st.error(
-                "Could not create ZIP file."
-            )
-
-            st.exception(
-                error
-            )
-
-
-    # =====================================================
-    # INDIVIDUAL RESULTS
-    # =====================================================
 
     for index, result in enumerate(
         results,
@@ -5600,7 +5105,7 @@ if (
 
             st.error(
                 f"{result.get('input')} → "
-                f"{result.get('format')}: "
+                f"{result.get('format')} → "
                 f"{result.get('error')}"
             )
 
@@ -5615,18 +5120,18 @@ if (
                 f"{result['output_name']}"
             )
 
-            c1, c2, c3, c4 = (
+            d1, d2, d3, d4 = (
                 st.columns(4)
             )
 
-            c1.metric(
+            d1.metric(
                 "Format",
                 result[
                     "format"
                 ],
             )
 
-            c2.metric(
+            d2.metric(
                 "Dimensions",
                 (
                     f"{result['width']} × "
@@ -5640,21 +5145,21 @@ if (
                 )
             )
 
-            c3.metric(
+            d3.metric(
                 "DPI",
                 (
                     result_dpi
-                    if result_dpi
-                    is not None
+                    if (
+                        result_dpi
+                        is not None
+                    )
                     else "N/A"
                 ),
             )
 
-            c4.metric(
-                "Color Mode",
-                result[
-                    "mode"
-                ],
+            d4.metric(
+                "Mode",
+                result["mode"],
             )
 
             for warning in (
@@ -5664,32 +5169,22 @@ if (
                 )
             ):
 
-                st.warning(
-                    warning
-                )
+                st.warning(warning)
 
             st.download_button(
                 (
                     "⬇️ Download "
                     f"{result['output_name']}"
                 ),
-                data=(
-                    result[
-                        "data"
-                    ]
-                ),
+                data=result["data"],
                 file_name=(
                     result[
                         "output_name"
                     ]
                 ),
-                mime=(
-                    result[
-                        "mime"
-                    ]
-                ),
+                mime=result["mime"],
                 key=(
-                    f"download_"
+                    f"individual_download_"
                     f"{index}_"
                     f"{result['output_name']}"
                 ),
@@ -5703,13 +5198,12 @@ if (
 
 st.divider()
 
-
 st.caption(
-    "AI Image Studio • Analysis • Editable Layers • "
-    "Object Recognition • Segmentation • Background Removal • "
-    "Color Editing • OCR • Export Source Selection • "
-    "Smart Export • .aistudio Projects • Professional Preflight • "
+    "AI Image Studio • JPG • JPEG • PNG • WEBP • TIFF • BMP • "
+    "PDF Single Page • PDF All Pages • SVG • HEIC • HEIF • "
+    "Editable Layers • Object Recognition • Segmentation • "
+    "Background Removal • Color Editing • OCR • "
+    "Smart Export • .aistudio Projects • "
     "PNG • JPEG • WEBP • TIFF • BMP • PDF • PSD (Flattened) • "
-    "Multi-Format Export • ZIP Download • "
-    "RGB • CMYK • Grayscale • 72–1200 DPI"
+    "Individual File Downloads"
 )
