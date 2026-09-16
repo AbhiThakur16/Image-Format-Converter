@@ -3,6 +3,7 @@ import math
 import os
 import re
 import hashlib
+import zipfile
 
 import streamlit as st
 from PIL import Image
@@ -319,7 +320,7 @@ def dimensions_from_width(
 
 
 # =========================================================
-# IMAGE → BYTES
+# IMAGE → PNG BYTES
 # =========================================================
 
 def image_to_bytes(image):
@@ -353,6 +354,72 @@ def safe_filename_part(text):
     )
 
     return text.strip("_")
+
+
+# =========================================================
+# CREATE ZIP FROM EXPORT RESULTS
+# =========================================================
+
+def create_exports_zip(results):
+
+    zip_buffer = io.BytesIO()
+
+    used_names = set()
+
+    with zipfile.ZipFile(
+        zip_buffer,
+        mode="w",
+        compression=zipfile.ZIP_DEFLATED,
+    ) as zip_file:
+
+        for index, result in enumerate(
+            results,
+            start=1,
+        ):
+
+            if not result.get(
+                "success"
+            ):
+                continue
+
+            file_name = result.get(
+                "output_name",
+                f"export_{index}",
+            )
+
+            original_name = file_name
+
+            counter = 1
+
+            while file_name in used_names:
+
+                name_part, extension = (
+                    os.path.splitext(
+                        original_name
+                    )
+                )
+
+                file_name = (
+                    f"{name_part}_{counter}"
+                    f"{extension}"
+                )
+
+                counter += 1
+
+            used_names.add(
+                file_name
+            )
+
+            zip_file.writestr(
+                file_name,
+                result[
+                    "data"
+                ],
+            )
+
+    zip_buffer.seek(0)
+
+    return zip_buffer.getvalue()
 
 
 # =========================================================
@@ -659,7 +726,7 @@ def rebuild_layer_group(prefix):
 
 
 # =========================================================
-# EXPORT SOURCES
+# BUILD EXPORT SOURCES
 # =========================================================
 
 def build_export_sources(
@@ -834,6 +901,7 @@ OUTPUT_SETTING_KEYS = [
     "output_maintain_ratio",
     "output_custom_width",
     "output_custom_height",
+    "output_locked_height",
     "output_dpi_mode",
     "output_dpi_preset",
     "output_custom_dpi",
@@ -987,6 +1055,17 @@ def ensure_output_defaults(
 
     st.session_state.setdefault(
         "output_custom_height",
+        max(
+            1,
+            min(
+                int(original_height),
+                150000,
+            ),
+        ),
+    )
+
+    st.session_state.setdefault(
+        "output_locked_height",
         max(
             1,
             min(
@@ -1192,6 +1271,10 @@ def apply_loaded_project_settings():
 
     st.session_state[
         "output_custom_height"
+    ] = saved_height
+
+    st.session_state[
+        "output_locked_height"
     ] = saved_height
 
     target_pixels = settings.get(
@@ -1724,7 +1807,7 @@ st.subheader(
 st.caption(
     "OPEN → ANALYZE → EXTRACT → EDIT → "
     "CHOOSE EXPORT SOURCE → SMART SETTINGS → "
-    "QUALITY CHECK → EXPORT"
+    "QUALITY CHECK → EXPORT → DOWNLOAD ZIP"
 )
 
 st.divider()
@@ -2064,7 +2147,7 @@ with project_tab:
 
 
 # =========================================================
-# SWITCH BACK
+# SWITCH BACK TO NORMAL IMAGE
 # =========================================================
 
 if (
@@ -2371,7 +2454,7 @@ else:
 
 
 # =========================================================
-# COLORS
+# DOMINANT COLORS
 # =========================================================
 
 st.subheader(
@@ -2578,7 +2661,7 @@ st.divider()
 
 
 # =========================================================
-# 05 — SEMANTIC
+# 05 — SEMANTIC LAYERS
 # =========================================================
 
 st.header(
@@ -4251,24 +4334,27 @@ else:
             ),
         )
 
-        st.session_state[
-            "output_custom_height"
-        ] = int(
-            target_height
-        )
-
         with d2:
 
             st.number_input(
                 "Height (px)",
                 min_value=1,
                 max_value=150000,
+                value=int(
+                    target_height
+                ),
                 step=1,
                 disabled=True,
                 key=(
-                    "output_custom_height"
+                    "output_locked_height"
                 ),
             )
+
+        st.info(
+            f"🔒 Aspect Ratio Locked: "
+            f"{target_width:,} × "
+            f"{target_height:,} px"
+        )
 
     else:
 
@@ -4292,6 +4378,12 @@ else:
 
         target_height = int(
             custom_height
+        )
+
+        st.success(
+            f"🔓 Custom Dimensions: "
+            f"{target_width:,} × "
+            f"{target_height:,} px"
         )
 
 
@@ -4382,8 +4474,21 @@ if (
     )
 
 
+if (
+    "PSD (Flattened)"
+    in selected_formats
+    and
+    color_mode != "RGB"
+):
+
+    st.warning(
+        "Current flattened PSD exporter saves the PSD image in RGB. "
+        "The selected CMYK/Grayscale mode does not change PSD output."
+    )
+
+
 # =========================================================
-# RESIZE
+# RESIZE MODE
 # =========================================================
 
 resize_mode = (
@@ -4882,7 +4987,6 @@ quality_format = (
 )
 
 
-# PSD uses normal raster-quality checks.
 quality_check_internal_format = (
     "TIFF"
     if (
@@ -5146,9 +5250,13 @@ if (
                 )
             )
 
-        except Exception:
+        except Exception as error:
 
-            pass
+            st.warning(
+                f"Could not prepare "
+                f"{uploaded_file.name}: "
+                f"{error}"
+            )
 
 
 else:
@@ -5184,6 +5292,8 @@ export_button = (
             not selected_formats
             or
             output_too_large
+            or
+            len(export_jobs) == 0
         ),
     )
 )
@@ -5405,6 +5515,80 @@ if (
         failure_count,
     )
 
+
+    # =====================================================
+    # DOWNLOAD ALL AS ZIP
+    # =====================================================
+
+    if success_count > 0:
+
+        try:
+
+            exports_zip = (
+                create_exports_zip(
+                    results
+                )
+            )
+
+            original_zip_name = (
+                os.path.splitext(
+                    uploaded_files[
+                        0
+                    ].name
+                )[0]
+            )
+
+            safe_zip_name = (
+                safe_filename_part(
+                    original_zip_name
+                )
+            )
+
+            if not safe_zip_name:
+
+                safe_zip_name = (
+                    "ai_image"
+                )
+
+            zip_file_name = (
+                f"{safe_zip_name}_exports.zip"
+            )
+
+            st.download_button(
+                "📦 Download All Successful Exports as ZIP",
+                data=(
+                    exports_zip
+                ),
+                file_name=(
+                    zip_file_name
+                ),
+                mime="application/zip",
+                use_container_width=True,
+                key=(
+                    "download_all_exports_zip"
+                ),
+            )
+
+            st.caption(
+                f"ZIP contains "
+                f"{success_count} successful export(s)."
+            )
+
+        except Exception as error:
+
+            st.error(
+                "Could not create ZIP file."
+            )
+
+            st.exception(
+                error
+            )
+
+
+    # =====================================================
+    # INDIVIDUAL RESULTS
+    # =====================================================
+
     for index, result in enumerate(
         results,
         start=1,
@@ -5526,5 +5710,6 @@ st.caption(
     "Color Editing • OCR • Export Source Selection • "
     "Smart Export • .aistudio Projects • Professional Preflight • "
     "PNG • JPEG • WEBP • TIFF • BMP • PDF • PSD (Flattened) • "
+    "Multi-Format Export • ZIP Download • "
     "RGB • CMYK • Grayscale • 72–1200 DPI"
 )
