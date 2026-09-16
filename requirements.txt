@@ -1,4 +1,8 @@
-Pillow==12.3.0
-psd-tools
-customtkinter
 streamlit
+Pillow
+numpy
+opencv-python-headless
+easyocr
+torch
+torchvision
+psd-tools

@@ -1,16 +1,50 @@
 import io
 import math
 import os
+import re
+import hashlib
 
 import streamlit as st
-from PIL import Image, ImageOps
-from psd_tools import PSDImage
+from PIL import Image
 
-from converter import (
-    physical_size_to_pixels,
-    print_preset_to_pixels,
-    pixels_to_physical_size
+from ai_analysis import analyze_image
+from layer_engine import extract_color_layers, rebuild_image
+from semantic_layers import create_semantic_layers
+from object_detection import create_object_layers
+
+from segmentation_engine import (
+    create_segmented_object_layers,
+    remove_background,
 )
+
+from color_editor import (
+    hex_to_rgb,
+    create_mask_preview,
+    color_selection_info,
+    replace_color,
+    remove_color,
+    extract_color_layer,
+    merge_colors,
+)
+
+from text_layers import create_text_layers
+from ocr_engine import create_ocr_layers
+
+from quality_check import run_quality_check
+from export_engine import export_image
+
+from project_engine import (
+    save_project,
+    load_project,
+    get_project_info,
+)
+
+from smart_export import (
+    EXPORT_PURPOSES,
+    recommend_export_settings,
+)
+
+from psd_export import export_flattened_psd
 
 
 # =========================================================
@@ -18,242 +52,101 @@ from converter import (
 # =========================================================
 
 st.set_page_config(
-    page_title="ImageCraft Pro",
+    page_title="AI Image Studio",
     page_icon="🖼️",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed",
 )
 
 
 # =========================================================
-# LIGHT PROFESSIONAL UI
+# CSS
 # =========================================================
 
 st.markdown(
     """
 <style>
 
+:root {
+    color-scheme: light;
+}
+
 .stApp {
-    background-color: #eef4ff;
+    background-color: #f6f8fc !important;
+    color: #172033 !important;
 }
 
 .block-container {
-    max-width: 1450px;
-    padding-top: 1.5rem;
+    max-width: 1400px;
+    padding-top: 1.2rem;
     padding-bottom: 3rem;
 }
 
-[data-testid="stSidebar"] {
-    background-color: #e8f1ff;
-    border-right: 1px solid #bfd3f2;
-}
-
-h1, h2, h3, h4 {
+h1, h2, h3, h4, h5, h6 {
     color: #172033 !important;
 }
 
 .stApp p,
-.stApp label {
+.stApp label,
+.stApp li,
+.stApp span {
     color: #334155;
 }
 
-[data-testid="stMetric"] {
-    background-color: #ffffff;
-    border: 1px solid #e2e8f0;
-    border-radius: 15px;
-    padding: 15px;
-    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
-}
-
-[data-testid="stFileUploader"] {
-    background-color: #ffffff;
-    border: 2px dashed #b8c8df;
-    border-radius: 16px;
-    padding: 10px;
+[data-testid="stMarkdownContainer"] {
+    color: #334155 !important;
 }
 
 [data-baseweb="select"] > div {
     background-color: #ffffff !important;
+    border: 1px solid #cbd5e1 !important;
+    color: #172033 !important;
 }
 
-[data-testid="stNumberInput"] input {
+[data-baseweb="select"] span {
+    color: #172033 !important;
+}
+
+[role="option"] {
     background-color: #ffffff !important;
     color: #172033 !important;
 }
 
-div.stButton > button {
-    width: 100%;
-    min-height: 48px;
-    border-radius: 12px;
-    font-weight: 700;
+[data-testid="stNumberInput"] input,
+[data-testid="stTextInput"] input,
+textarea {
+    background-color: #ffffff !important;
+    color: #172033 !important;
 }
 
-div.stDownloadButton > button {
-    width: 100%;
-    min-height: 46px;
-    border-radius: 12px;
-    font-weight: 700;
-}
-
-[data-testid="stAlert"] {
+[data-testid="stMetric"] {
+    background-color: #ffffff !important;
+    border: 1px solid #e2e8f0;
     border-radius: 14px;
+    padding: 12px;
 }
 
-button[data-baseweb="tab"] {
-    font-weight: 650;
-}
-
-hr {
-    border-color: #e2e8f0;
-}
-
-
-
-/* =========================================================
-   HIGH-CONTRAST MOBILE + SIDEBAR COLOR FIX
-   ========================================================= */
-
-html,
-body,
-.stApp {
-    color-scheme: light !important;
-}
-
-.stApp {
-    color: #172033 !important;
-}
-
-/* Sidebar background and ALL text */
-[data-testid="stSidebar"],
-[data-testid="stSidebar"] > div {
-    background-color: #e8f1ff !important;
-}
-
-[data-testid="stSidebar"] h1,
-[data-testid="stSidebar"] h2,
-[data-testid="stSidebar"] h3,
-[data-testid="stSidebar"] h4,
-[data-testid="stSidebar"] p,
-[data-testid="stSidebar"] label,
-[data-testid="stSidebar"] span,
-[data-testid="stSidebar"] small,
-[data-testid="stSidebar"] div {
-    color: #172033 !important;
-    opacity: 1 !important;
-}
-
-/* Captions/help text */
-[data-testid="stSidebar"] [data-testid="stCaptionContainer"],
-[data-testid="stSidebar"] [data-testid="stCaptionContainer"] p,
-[data-testid="stSidebar"] .stCaption,
-[data-testid="stSidebar"] small {
-    color: #52657f !important;
-    opacity: 1 !important;
-}
-
-/* Select boxes */
-[data-testid="stSidebar"] div[data-baseweb="select"] > div,
-div[data-baseweb="select"] > div {
-    background-color: #ffffff !important;
-    color: #111827 !important;
-    border-color: #b8c8df !important;
-}
-
-[data-testid="stSidebar"] div[data-baseweb="select"] span,
-[data-testid="stSidebar"] div[data-baseweb="select"] svg,
-div[data-baseweb="select"] span,
-div[data-baseweb="select"] svg {
-    color: #111827 !important;
-    fill: #111827 !important;
-}
-
-/* Dropdown popup menu is rendered outside sidebar */
-[role="listbox"],
-[role="option"],
-div[data-baseweb="popover"] {
-    background-color: #ffffff !important;
-    color: #111827 !important;
-}
-
-[role="option"] * {
-    color: #111827 !important;
-}
-
-/* Number inputs */
-[data-testid="stNumberInput"] input {
-    background-color: #ffffff !important;
-    color: #111827 !important;
-    -webkit-text-fill-color: #111827 !important;
-    opacity: 1 !important;
-}
-
-[data-testid="stNumberInput"] button {
-    background-color: #eef2f7 !important;
-    color: #111827 !important;
-    border-color: #cbd5e1 !important;
-}
-
-[data-testid="stNumberInput"] button svg {
-    fill: #111827 !important;
-    color: #111827 !important;
-}
-
-/* Checkbox labels */
-[data-testid="stCheckbox"] label,
-[data-testid="stCheckbox"] span {
-    color: #172033 !important;
-    opacity: 1 !important;
-}
-
-/* Sliders */
-[data-testid="stSlider"] label,
-[data-testid="stSlider"] p,
-[data-testid="stSlider"] span {
-    color: #172033 !important;
-    opacity: 1 !important;
-}
-
-[data-testid="stSlider"] [role="slider"] {
-    background-color: #2563eb !important;
-    border-color: #2563eb !important;
-}
-
-/* Dividers */
-[data-testid="stSidebar"] hr {
-    border-color: #bfd3f2 !important;
-}
-
-/* Metric text */
 [data-testid="stMetricLabel"],
 [data-testid="stMetricValue"] {
     color: #172033 !important;
 }
 
-/* File uploader */
-[data-testid="stFileUploader"] * {
-    color: #172033 !important;
+[data-testid="stFileUploader"] {
+    background-color: #ffffff !important;
+    border: 2px dashed #94a3b8;
+    border-radius: 16px;
+    padding: 10px;
 }
 
-/* Mobile sidebar width */
-@media (max-width: 900px) {
-    [data-testid="stSidebar"] {
-        width: 88vw !important;
-        min-width: 88vw !important;
-        max-width: 88vw !important;
-    }
-
-    [data-testid="stSidebar"] .block-container {
-        padding-left: 0.8rem !important;
-        padding-right: 0.8rem !important;
-    }
+div.stButton > button,
+div.stDownloadButton > button {
+    width: 100%;
+    min-height: 46px;
+    border-radius: 10px;
+    font-weight: 700;
 }
 
-/* =========================================================
-   MOBILE / TABLET OPTIMIZATION
-   Existing desktop design and sidebar are unchanged.
-   ========================================================= */
-
-@media (max-width: 900px) {
+@media (max-width: 768px) {
 
     .block-container {
         padding-left: 1rem !important;
@@ -263,122 +156,16 @@ div[data-baseweb="popover"] {
 
     h1 {
         font-size: 2rem !important;
-        line-height: 1.15 !important;
     }
 
     h2 {
-        font-size: 1.35rem !important;
-    }
-
-    h3 {
-        font-size: 1.1rem !important;
-    }
-
-    div.stButton > button,
-    div.stDownloadButton > button {
-        min-height: 48px !important;
-    }
-}
-
-
-@media (max-width: 640px) {
-
-    .block-container {
-        padding-left: 0.65rem !important;
-        padding-right: 0.65rem !important;
-        padding-top: 0.7rem !important;
-        padding-bottom: 2rem !important;
-    }
-
-    h1 {
-        font-size: 1.65rem !important;
-        line-height: 1.12 !important;
-    }
-
-    h2 {
-        font-size: 1.22rem !important;
-        line-height: 1.2 !important;
-    }
-
-    h3 {
-        font-size: 1.05rem !important;
-    }
-
-    p,
-    label {
-        font-size: 0.92rem !important;
-    }
-
-    /* Stack normal page columns vertically on mobile */
-    section.main [data-testid="stHorizontalBlock"] {
-        flex-wrap: wrap !important;
-        gap: 0.55rem !important;
-    }
-
-    section.main [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
-        flex: 1 1 100% !important;
-        width: 100% !important;
-        min-width: 100% !important;
-    }
-
-    [data-testid="stMetric"] {
-        padding: 10px !important;
-        border-radius: 12px !important;
-    }
-
-    [data-testid="stMetricLabel"] {
-        font-size: 0.78rem !important;
-    }
-
-    [data-testid="stMetricValue"] {
-        font-size: 1.05rem !important;
-    }
-
-    [data-testid="stFileUploader"] {
-        padding: 5px !important;
-        border-radius: 12px !important;
-    }
-
-    [data-testid="stFileUploaderDropzone"] {
-        padding: 0.75rem !important;
-        min-height: 82px !important;
-    }
-
-    div.stButton > button,
-    div.stDownloadButton > button {
-        width: 100% !important;
-        min-height: 48px !important;
-        font-size: 0.98rem !important;
-        border-radius: 11px !important;
-    }
-
-    [data-baseweb="select"] > div,
-    [data-testid="stNumberInput"] input {
-        min-height: 46px !important;
-        font-size: 16px !important;
-    }
-
-    .stMarkdown,
-    .stCaption,
-    code,
-    pre {
-        overflow-wrap: anywhere !important;
-        word-break: break-word !important;
-    }
-
-    hr {
-        margin-top: 0.8rem !important;
-        margin-bottom: 0.8rem !important;
-    }
-
-    [data-testid="stVerticalBlock"] {
-        gap: 0.55rem !important;
+        font-size: 1.5rem !important;
     }
 }
 
 </style>
 """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 
 
@@ -386,92 +173,53 @@ div[data-baseweb="popover"] {
 # CONSTANTS
 # =========================================================
 
-SCREEN_PRESETS = {
-    "HD - 1280 × 720": (1280, 720),
-    "Full HD - 1920 × 1080": (1920, 1080),
-    "2K - 2560 × 1440": (2560, 1440),
-    "4K - 3840 × 2160": (3840, 2160)
-}
+MAX_DIMENSION = 150000
+
+MAX_TOTAL_EXPORT_PIXELS = 150_000_000
+
+
+VALID_EXPORT_FORMATS = [
+    "PNG",
+    "JPEG",
+    "WEBP",
+    "TIFF",
+    "BMP",
+    "PDF",
+    "PSD (Flattened)",
+]
+
+
+DPI_PRESETS = [
+    72,
+    96,
+    150,
+    300,
+    600,
+    1200,
+]
+
+
+SMART_EXPORT_PRIORITIES = [
+    "Balanced",
+    "Smallest File",
+    "Maximum Quality",
+]
 
 
 # =========================================================
-# IMAGE HELPERS
+# IMAGE ANALYSIS CACHE
 # =========================================================
 
-def convert_to_rgb(image):
+@st.cache_data(show_spinner=False)
+def cached_ai_analysis(image_bytes):
 
-    if image.mode in ("RGBA", "LA"):
+    with Image.open(
+        io.BytesIO(image_bytes)
+    ) as opened:
 
-        rgba = image.convert("RGBA")
+        image = opened.copy()
 
-        background = Image.new(
-            "RGB",
-            rgba.size,
-            "white"
-        )
-
-        background.paste(
-            rgba,
-            mask=rgba.getchannel("A")
-        )
-
-        return background
-
-    if image.mode == "P":
-        return image.convert("RGB")
-
-    if image.mode != "RGB":
-        return image.convert("RGB")
-
-    return image
-
-
-def apply_color_mode(
-    image,
-    color_mode
-):
-
-    if color_mode == "Grayscale":
-        return image.convert("L")
-
-    return convert_to_rgb(image)
-
-
-# =========================================================
-# RESAMPLING
-# =========================================================
-
-def get_resampling_filter(
-    resize_quality
-):
-
-    if resize_quality == "Fast - Bilinear":
-        return Image.Resampling.BILINEAR
-
-    if resize_quality == "Balanced - Bicubic":
-        return Image.Resampling.BICUBIC
-
-    return Image.Resampling.LANCZOS
-
-
-# =========================================================
-# TIFF COMPRESSION
-# =========================================================
-
-def get_tiff_compression(
-    compression_name
-):
-
-    compression_map = {
-        "LZW - Lossless": "tiff_lzw",
-        "Deflate - Lossless": "tiff_adobe_deflate",
-        "None - Uncompressed": "raw"
-    }
-
-    return compression_map.get(
-        compression_name,
-        "tiff_lzw"
-    )
+    return analyze_image(image)
 
 
 # =========================================================
@@ -480,523 +228,109 @@ def get_tiff_compression(
 
 def target_pixels_to_dimensions(
     original_size,
-    total_pixels
+    total_pixels,
 ):
-    """
-    Convert a requested TOTAL pixel count into Width × Height
-    while preserving the original image aspect ratio.
-
-    Example:
-    100000 total pixels -> dimensions are calculated automatically.
-    """
 
     original_width, original_height = original_size
 
-    if original_width <= 0 or original_height <= 0:
+    total_pixels = max(
+        1,
+        min(
+            int(total_pixels),
+            150000,
+        ),
+    )
+
+    if total_pixels == 1:
         return 1, 1
 
     aspect_ratio = (
-        original_width / original_height
+        original_width
+        / original_height
     )
 
     width = max(
         1,
-        round(
+        int(
             math.sqrt(
-                int(total_pixels) * aspect_ratio
+                total_pixels
+                * aspect_ratio
             )
-        )
+        ),
     )
 
     height = max(
         1,
-        round(
-            int(total_pixels) / width
-        )
+        total_pixels // width,
     )
+
+    while (
+        width * height
+        > total_pixels
+    ):
+
+        if height > 1:
+            height -= 1
+
+        elif width > 1:
+            width -= 1
+
+        else:
+            break
 
     return (
-        width,
-        height
+        int(width),
+        int(height),
     )
 
 
 # =========================================================
-# TARGET SIZE
+# ASPECT RATIO
 # =========================================================
 
-def calculate_target_size(
+def dimensions_from_width(
     original_size,
-    size_mode,
-    screen_preset,
-    paper_size,
-    orientation,
-    custom_width,
-    custom_height,
-    custom_unit,
-    target_total_pixels,
-    dpi
+    new_width,
 ):
 
-    original_width, original_height = (
-        original_size
-    )
+    original_width, original_height = original_size
 
-    # ORIGINAL
-    if size_mode == "Original Size":
-
-        return (
-            original_width,
-            original_height
-        )
-
-    # SCREEN
-    if size_mode == "Screen Resolution":
-
-        return SCREEN_PRESETS[
-            screen_preset
-        ]
-
-    # PRINT
-    if size_mode == "Print Preset":
-
-        return print_preset_to_pixels(
-            paper_size,
-            orientation,
-            dpi
-        )
-
-    # TARGET TOTAL PIXELS
-    if size_mode == "Target Total Pixels":
-
-        return target_pixels_to_dimensions(
-            original_size,
-            target_total_pixels
-        )
-
-    # CUSTOM
-    if size_mode == "Custom Size":
-
-        return physical_size_to_pixels(
-            custom_width,
-            custom_height,
-            custom_unit,
-            dpi
-        )
-
-    return (
-        original_width,
+    ratio = (
         original_height
+        / original_width
     )
 
-
-# =========================================================
-# PREDICT OUTPUT SIZE
-# =========================================================
-
-def predict_output_size(
-    original_size,
-    target_size,
-    resize_behavior
-):
-
-    original_width, original_height = (
-        original_size
+    new_height = round(
+        new_width * ratio
     )
 
-    target_width, target_height = (
-        target_size
+    new_height = max(
+        1,
+        min(
+            int(new_height),
+            MAX_DIMENSION,
+        ),
     )
-
-    # FIT
-    if resize_behavior == "Fit":
-
-        scale = min(
-            target_width / original_width,
-            target_height / original_height
-        )
-
-        new_width = max(
-            1,
-            round(
-                original_width * scale
-            )
-        )
-
-        new_height = max(
-            1,
-            round(
-                original_height * scale
-            )
-        )
-
-        return (
-            new_width,
-            new_height
-        )
-
-    # FILL AND CROP
-    if resize_behavior == "Fill & Crop":
-
-        return (
-            target_width,
-            target_height
-        )
-
-    # STRETCH
-    if resize_behavior == "Stretch":
-
-        return (
-            target_width,
-            target_height
-        )
-
-    return original_size
-
-
-# =========================================================
-# RESIZE BEHAVIOUR
-# =========================================================
-
-def resize_with_behavior(
-    image,
-    target_width,
-    target_height,
-    resize_behavior,
-    resize_quality
-):
-
-    resampling_filter = (
-        get_resampling_filter(
-            resize_quality
-        )
-    )
-
-    original_width, original_height = (
-        image.size
-    )
-
-    # -----------------------------------------------------
-    # FIT
-    # -----------------------------------------------------
-
-    if resize_behavior == "Fit":
-
-        scale = min(
-            target_width / original_width,
-            target_height / original_height
-        )
-
-        new_width = max(
-            1,
-            round(
-                original_width * scale
-            )
-        )
-
-        new_height = max(
-            1,
-            round(
-                original_height * scale
-            )
-        )
-
-        return image.resize(
-            (
-                new_width,
-                new_height
-            ),
-            resampling_filter
-        )
-
-    # -----------------------------------------------------
-    # FILL & CROP
-    # -----------------------------------------------------
-
-    if resize_behavior == "Fill & Crop":
-
-        return ImageOps.fit(
-            image,
-            (
-                target_width,
-                target_height
-            ),
-            method=resampling_filter,
-            centering=(
-                0.5,
-                0.5
-            )
-        )
-
-    # -----------------------------------------------------
-    # STRETCH
-    # -----------------------------------------------------
-
-    if resize_behavior == "Stretch":
-
-        return image.resize(
-            (
-                target_width,
-                target_height
-            ),
-            resampling_filter
-        )
-
-    return image
-
-
-# =========================================================
-# QUALITY CHECK
-# =========================================================
-
-def get_quality_warning(
-    original_width,
-    original_height,
-    output_width,
-    output_height
-):
-
-    width_scale = (
-        output_width / original_width
-    )
-
-    height_scale = (
-        output_height / original_height
-    )
-
-    largest_scale = max(
-        width_scale,
-        height_scale
-    )
-
-    if largest_scale >= 3:
-
-        return (
-            "high",
-            "High Upscaling",
-            (
-                "The image is being enlarged by about "
-                f"{largest_scale:.1f}×. Increasing pixels "
-                "does not create new source detail, so the "
-                "result may look softer."
-            )
-        )
-
-    if largest_scale >= 2:
-
-        return (
-            "medium",
-            "Moderate Upscaling",
-            (
-                "The image is being enlarged significantly. "
-                "High Quality - Lanczos is recommended."
-            )
-        )
-
-    if largest_scale > 1:
-
-        return (
-            "light",
-            "Light Upscaling",
-            (
-                "A small amount of enlargement will be applied."
-            )
-        )
 
     return (
-        "good",
-        "Good Quality",
-        (
-            "No major upscaling quality issue detected."
-        )
+        int(new_width),
+        int(new_height),
     )
 
 
 # =========================================================
-# CONVERT IMAGE
+# IMAGE → BYTES
 # =========================================================
 
-def convert_uploaded_image(
-    uploaded_file,
-    output_format,
-    target_width,
-    target_height,
-    dpi,
-    color_mode,
-    resize_quality,
-    tiff_compression,
-    resize_behavior
-):
-
-    source_bytes = (
-        uploaded_file.getvalue()
-    )
-
-    with Image.open(
-        io.BytesIO(source_bytes)
-    ) as opened_image:
-
-        image = opened_image.copy()
-
-    base_name = os.path.splitext(
-        uploaded_file.name
-    )[0]
-
-    # -----------------------------------------------------
-    # TIFF / BMP IMAGE PROCESSING
-    # -----------------------------------------------------
-
-    if output_format in (
-        "TIFF",
-        "BMP"
-    ):
-
-        image = resize_with_behavior(
-            image,
-            target_width,
-            target_height,
-            resize_behavior,
-            resize_quality
-        )
-
-        image = apply_color_mode(
-            image,
-            color_mode
-        )
-
-    output_buffer = io.BytesIO()
-
-    # -----------------------------------------------------
-    # TIFF
-    # -----------------------------------------------------
-
-    if output_format == "TIFF":
-
-        image.save(
-            output_buffer,
-            format="TIFF",
-            dpi=(
-                int(dpi),
-                int(dpi)
-            ),
-            compression=get_tiff_compression(
-                tiff_compression
-            )
-        )
-
-        output_name = (
-            f"{base_name}.tiff"
-        )
-
-        mime = "image/tiff"
-
-    # -----------------------------------------------------
-    # BMP
-    # -----------------------------------------------------
-
-    elif output_format == "BMP":
-
-        image.save(
-            output_buffer,
-            format="BMP",
-            dpi=(
-                int(dpi),
-                int(dpi)
-            )
-        )
-
-        output_name = (
-            f"{base_name}.bmp"
-        )
-
-        mime = "image/bmp"
-
-    # -----------------------------------------------------
-    # PDF
-    # -----------------------------------------------------
-
-    elif output_format == "PDF":
-
-        image = convert_to_rgb(
-            image
-        )
-
-        image.save(
-            output_buffer,
-            format="PDF",
-            resolution=100.0
-        )
-
-        output_name = (
-            f"{base_name}.pdf"
-        )
-
-        mime = "application/pdf"
-
-    # -----------------------------------------------------
-    # PSD
-    # -----------------------------------------------------
-
-    elif output_format == "PSD":
-
-        image = convert_to_rgb(
-            image
-        )
-
-        psd_image = PSDImage.frompil(
-            image
-        )
-
-        psd_image.save(
-            output_buffer
-        )
-
-        output_name = (
-            f"{base_name}.psd"
-        )
-
-        mime = "application/octet-stream"
-
-    else:
-
-        raise ValueError(
-            "Unsupported output format."
-        )
-
-    output_buffer.seek(0)
-
-    return (
-        output_buffer.getvalue(),
-        output_name,
-        mime,
-        image
-    )
-
-
-# =========================================================
-# PREVIEW BYTES
-# =========================================================
-
-def create_preview_bytes(
-    image
-):
-
-    preview = image.copy()
-
-    if preview.mode not in (
-        "RGB",
-        "RGBA"
-    ):
-
-        preview = preview.convert(
-            "RGB"
-        )
+def image_to_bytes(image):
 
     buffer = io.BytesIO()
 
-    preview.save(
+    image.convert(
+        "RGBA"
+    ).save(
         buffer,
-        format="PNG"
+        format="PNG",
     )
 
     buffer.seek(0)
@@ -1005,447 +339,1371 @@ def create_preview_bytes(
 
 
 # =========================================================
-# DEFAULTS
+# SAFE FILE NAME
 # =========================================================
 
-size_mode = "Original Size"
+def safe_filename_part(text):
 
-screen_preset = (
-    "Full HD - 1920 × 1080"
-)
+    text = str(text).lower()
 
-paper_size = "A4"
+    text = re.sub(
+        r"[^a-z0-9]+",
+        "_",
+        text,
+    )
 
-orientation = "Portrait"
-
-custom_width = 1920.0
-custom_height = 1080.0
-
-custom_unit = "Pixels"
-
-custom_pixels_enabled = False
-custom_pixel_width = 1920
-custom_pixel_height = 1080
-
-target_total_pixels = 100000
-
-dpi = 300
-
-color_mode = "RGB Color"
-
-resize_quality = (
-    "High Quality - Lanczos"
-)
-
-resize_behavior = "Fit"
-
-tiff_compression = (
-    "LZW - Lossless"
-)
+    return text.strip("_")
 
 
 # =========================================================
-# SIDEBAR
+# MEMORY FILE
 # =========================================================
 
-with st.sidebar:
+class MemoryUploadedFile:
 
-    st.title(
-        "🎛️ Export Studio"
+    def __init__(
+        self,
+        name,
+        data,
+    ):
+
+        self.name = name
+        self._data = data
+
+    def getvalue(self):
+
+        return self._data
+
+
+# =========================================================
+# INITIALIZE LAYER STATE
+# =========================================================
+
+def initialize_layer_state(
+    prefix,
+    layers,
+):
+
+    revision_key = (
+        f"{prefix}_revision"
     )
 
-    st.caption(
-        "Configure professional export settings."
+    st.session_state[
+        revision_key
+    ] = (
+        st.session_state.get(
+            revision_key,
+            0,
+        )
+        + 1
     )
 
-    st.divider()
-
-    # -----------------------------------------------------
-    # OUTPUT FORMAT
-    # -----------------------------------------------------
-
-    st.subheader(
-        "File Format"
-    )
-
-    output_format = st.selectbox(
-        "Output Format",
-        [
-            "TIFF",
-            "BMP",
-            "PDF",
-            "PSD"
+    revision = (
+        st.session_state[
+            revision_key
         ]
     )
 
-    # =====================================================
-    # TIFF / BMP OPTIONS
-    # =====================================================
+    prepared_layers = []
 
-    if output_format in (
-        "TIFF",
-        "BMP"
+    for index, layer in enumerate(
+        layers
     ):
 
-        st.divider()
+        layer_copy = layer.copy()
 
-        # -------------------------------------------------
-        # SIZE MODE
-        # -------------------------------------------------
-
-        st.subheader(
-            "📐 Size & Resolution"
+        layer_copy["_uid"] = (
+            f"{prefix}_"
+            f"{revision}_"
+            f"{index}_"
+            f"{layer.get('type', 'layer')}"
         )
 
-        size_mode = st.selectbox(
-            "Size Mode",
-            [
-                "Original Size",
-                "Screen Resolution",
-                "Print Preset",
-                "Target Total Pixels",
-                "Custom Size"
-            ]
+        prepared_layers.append(
+            layer_copy
         )
 
-        # -------------------------------------------------
-        # SCREEN SIZE
-        # -------------------------------------------------
+    st.session_state[
+        f"{prefix}_layers"
+    ] = prepared_layers
 
-        if size_mode == (
-            "Screen Resolution"
-        ):
+    st.session_state[
+        f"{prefix}_visibility"
+    ] = [
+        True
+        for _ in prepared_layers
+    ]
 
-            screen_preset = st.selectbox(
-                "Screen Quality",
-                list(
-                    SCREEN_PRESETS.keys()
-                )
-            )
+    st.session_state[
+        f"{prefix}_opacity"
+    ] = [
+        100
+        for _ in prepared_layers
+    ]
 
-        # -------------------------------------------------
-        # PRINT SIZE
-        # -------------------------------------------------
-
-        elif size_mode == (
-            "Print Preset"
-        ):
-
-            paper_size = st.selectbox(
-                "Paper Size",
-                [
-                    "A5",
-                    "A4",
-                    "A3",
-                    "A2"
-                ]
-            )
-
-            orientation = st.selectbox(
-                "Orientation",
-                [
-                    "Portrait",
-                    "Landscape"
-                ]
-            )
-
-        # -------------------------------------------------
-        # TARGET TOTAL PIXELS
-        # -------------------------------------------------
-
-        elif size_mode == (
-            "Target Total Pixels"
-        ):
-
-            st.markdown(
-                "#### 🎯 Target Total Pixels"
-            )
-
-            target_total_pixels = st.slider(
-                "Total Pixel Count",
-                min_value=75000,
-                max_value=150000,
-                value=100000,
-                step=5000,
-                help=(
-                    "Select the total output pixel count "
-                    "from 0.75 lakh to 1.50 lakh. "
-                    "Width and Height are calculated automatically "
-                    "using the original aspect ratio."
-                )
-            )
-
-            st.caption(
-                f"Selected: "
-                f"{target_total_pixels / 100000:.2f} lakh "
-                f"({target_total_pixels:,} total pixels)"
-            )
-
-        # -------------------------------------------------
-        # CUSTOM SIZE
-        # -------------------------------------------------
-
-        elif size_mode == (
-            "Custom Size"
-        ):
-
-            custom_unit = st.selectbox(
-                "Measurement Unit",
-                [
-                    "Pixels",
-                    "Inches",
-                    "CM",
-                    "MM"
-                ]
-            )
-
-            custom_col1, custom_col2 = (
-                st.columns(2)
-            )
-
-            if custom_unit == "Pixels":
-
-                default_width = 1920.0
-                default_height = 1080.0
-                step_size = 1.0
-
-            else:
-
-                default_width = 10.0
-                default_height = 8.0
-                step_size = 0.1
-
-            with custom_col1:
-
-                custom_width = (
-                    st.number_input(
-                        "Width",
-                        min_value=0.1,
-                        max_value=20000.0,
-                        value=default_width,
-                        step=step_size
-                    )
-                )
-
-            with custom_col2:
-
-                custom_height = (
-                    st.number_input(
-                        "Height",
-                        min_value=0.1,
-                        max_value=20000.0,
-                        value=default_height,
-                        step=step_size
-                    )
-                )
-
-        # -------------------------------------------------
-        # SEPARATE CUSTOM PIXELS CHANGER
-        # -------------------------------------------------
-
-        st.divider()
-
-        st.subheader(
-            "🔢 Custom Pixels Changer"
+    st.session_state[
+        f"{prefix}_names"
+    ] = [
+        layer.get(
+            "name",
+            f"Layer {index + 1}",
         )
-
-        custom_pixels_enabled = st.checkbox(
-            "Use Custom Pixels",
-            value=False,
-            help=(
-                "Enable this to override the selected "
-                "size preset with any pixel width and height."
-            )
+        for index, layer
+        in enumerate(
+            prepared_layers
         )
+    ]
 
-        pixel_col1, pixel_col2 = (
-            st.columns(2)
-        )
 
-        with pixel_col1:
-            custom_pixel_width = (
-                st.number_input(
-                    "Width (px)",
-                    min_value=1,
-                    max_value=150000,
-                    value=1920,
-                    step=1,
-                    disabled=not custom_pixels_enabled
-                )
-            )
+# =========================================================
+# COLLECT PROJECT LAYERS
+# =========================================================
 
-        with pixel_col2:
-            custom_pixel_height = (
-                st.number_input(
-                    "Height (px)",
-                    min_value=1,
-                    max_value=150000,
-                    value=1080,
-                    step=1,
-                    disabled=not custom_pixels_enabled
-                )
-            )
+def collect_project_layers(prefix):
 
-        st.caption(
-            "Enter any Width and Height. "
-            "When enabled, these pixels override "
-            "the selected size setting."
-        )
-
-        # -------------------------------------------------
-        # RESIZE BEHAVIOUR
-        # -------------------------------------------------
-
-        st.divider()
-
-        st.subheader(
-            "↔️ Resize Behaviour"
-        )
-
-        resize_behavior = st.selectbox(
-            "Image Fitting",
-            [
-                "Fit",
-                "Fill & Crop",
-                "Stretch"
-            ]
-        )
-
-        if resize_behavior == "Fit":
-
-            st.caption(
-                "Preserves image proportions and "
-                "fits the complete image inside the target size."
-            )
-
-        elif resize_behavior == "Fill & Crop":
-
-            st.caption(
-                "Fills the exact target dimensions while "
-                "preserving proportions. Some edges may be cropped."
-            )
-
-        else:
-
-            st.warning(
-                "Stretch uses the exact width and height "
-                "and may distort the image."
-            )
-
-        # -------------------------------------------------
-        # DPI
-        # -------------------------------------------------
-
-        st.divider()
-
-        st.subheader(
-            "🖨️ DPI Control"
-        )
-
-        dpi = st.slider(
-            "DPI",
-            min_value=72,
-            max_value=600,
-            value=300,
-            step=1
-        )
-
-        st.caption(
-            f"Selected DPI: {dpi}"
-        )
-
-        # -------------------------------------------------
-        # COLOR MODE
-        # -------------------------------------------------
-
-        st.divider()
-
-        st.subheader(
-            "🎨 Color Mode"
-        )
-
-        color_mode = st.selectbox(
-            "Output Color",
-            [
-                "RGB Color",
-                "Grayscale"
-            ]
-        )
-
-        # -------------------------------------------------
-        # QUALITY
-        # -------------------------------------------------
-
-        st.divider()
-
-        st.subheader(
-            "✨ Resize Quality"
-        )
-
-        resize_quality = st.selectbox(
-            "Resampling Method",
-            [
-                "High Quality - Lanczos",
-                "Balanced - Bicubic",
-                "Fast - Bilinear"
-            ]
-        )
-
-        if resize_quality == (
-            "High Quality - Lanczos"
-        ):
-
-            st.caption(
-                "Recommended for best quality."
-            )
-
-        elif resize_quality == (
-            "Balanced - Bicubic"
-        ):
-
-            st.caption(
-                "Good balance of speed and quality."
-            )
-
-        else:
-
-            st.caption(
-                "Faster processing with lower resize quality."
-            )
-
-        # -------------------------------------------------
-        # TIFF COMPRESSION
-        # -------------------------------------------------
-
-        if output_format == "TIFF":
-
-            st.divider()
-
-            st.subheader(
-                "📦 TIFF Compression"
-            )
-
-            tiff_compression = st.selectbox(
-                "Compression",
-                [
-                    "LZW - Lossless",
-                    "Deflate - Lossless",
-                    "None - Uncompressed"
-                ]
-            )
-
-            st.caption(
-                "LZW is recommended for most TIFF exports."
-            )
-
-    st.divider()
-
-    st.caption(
-        "Input: PNG • JPG • JPEG"
+    layers_key = (
+        f"{prefix}_layers"
     )
 
-    st.caption(
-        "Output: TIFF • BMP • PDF • PSD"
+    if (
+        layers_key
+        not in st.session_state
+    ):
+
+        return []
+
+    layers = (
+        st.session_state[
+            layers_key
+        ]
+    )
+
+    visibility = (
+        st.session_state.get(
+            f"{prefix}_visibility",
+            [
+                True
+                for _ in layers
+            ],
+        )
+    )
+
+    opacity = (
+        st.session_state.get(
+            f"{prefix}_opacity",
+            [
+                100
+                for _ in layers
+            ],
+        )
+    )
+
+    names = (
+        st.session_state.get(
+            f"{prefix}_names",
+            [
+                layer.get(
+                    "name",
+                    f"Layer {index + 1}",
+                )
+                for index, layer
+                in enumerate(layers)
+            ],
+        )
+    )
+
+    project_layers = []
+
+    for index, layer in enumerate(
+        layers
+    ):
+
+        layer_copy = layer.copy()
+
+        layer_copy[
+            "_saved_visible"
+        ] = bool(
+            visibility[index]
+        )
+
+        layer_copy[
+            "_saved_opacity"
+        ] = int(
+            opacity[index]
+        )
+
+        layer_copy[
+            "_saved_name"
+        ] = names[index]
+
+        project_layers.append(
+            layer_copy
+        )
+
+    return project_layers
+
+
+# =========================================================
+# RESTORE PROJECT LAYERS
+# =========================================================
+
+def restore_project_layers(
+    prefix,
+    layers,
+):
+
+    if not layers:
+        return
+
+    initialize_layer_state(
+        prefix,
+        layers,
+    )
+
+    for index, layer in enumerate(
+        layers
+    ):
+
+        if index >= len(
+            st.session_state[
+                f"{prefix}_layers"
+            ]
+        ):
+            break
+
+        st.session_state[
+            f"{prefix}_visibility"
+        ][index] = bool(
+            layer.get(
+                "_saved_visible",
+                True,
+            )
+        )
+
+        st.session_state[
+            f"{prefix}_opacity"
+        ][index] = int(
+            layer.get(
+                "_saved_opacity",
+                100,
+            )
+        )
+
+        st.session_state[
+            f"{prefix}_names"
+        ][index] = layer.get(
+            "_saved_name",
+            layer.get(
+                "name",
+                f"Layer {index + 1}",
+            ),
+        )
+
+
+# =========================================================
+# REBUILD LAYER GROUP
+# =========================================================
+
+def rebuild_layer_group(prefix):
+
+    layers_key = (
+        f"{prefix}_layers"
+    )
+
+    if (
+        layers_key
+        not in st.session_state
+    ):
+        return None
+
+    layers = (
+        st.session_state[
+            layers_key
+        ]
+    )
+
+    if not layers:
+        return None
+
+    visibility = (
+        st.session_state.get(
+            f"{prefix}_visibility",
+            [
+                True
+                for _ in layers
+            ],
+        )
+    )
+
+    opacity = (
+        st.session_state.get(
+            f"{prefix}_opacity",
+            [
+                100
+                for _ in layers
+            ],
+        )
+    )
+
+    try:
+
+        return rebuild_image(
+            layers,
+            visibility=visibility,
+            opacities=opacity,
+        )
+
+    except Exception:
+
+        return None
+
+
+# =========================================================
+# EXPORT SOURCES
+# =========================================================
+
+def build_export_sources(
+    original_image,
+):
+
+    sources = {
+        "Original Image":
+            original_image
+    }
+
+    smart_color = (
+        st.session_state.get(
+            "smart_color_result"
+        )
+    )
+
+    if isinstance(
+        smart_color,
+        Image.Image,
+    ):
+
+        sources[
+            "Smart Color Edited Image"
+        ] = smart_color
+
+    background_result = (
+        st.session_state.get(
+            "background_remove_result"
+        )
+    )
+
+    if isinstance(
+        background_result,
+        dict,
+    ):
+
+        background_image = (
+            background_result.get(
+                "image"
+            )
+        )
+
+        if isinstance(
+            background_image,
+            Image.Image,
+        ):
+
+            sources[
+                "Background Removed Image"
+            ] = background_image
+
+    color_rebuilt = (
+        rebuild_layer_group(
+            "color"
+        )
+    )
+
+    if isinstance(
+        color_rebuilt,
+        Image.Image,
+    ):
+
+        sources[
+            "Color Layer Reconstruction"
+        ] = color_rebuilt
+
+    semantic_rebuilt = (
+        rebuild_layer_group(
+            "semantic"
+        )
+    )
+
+    if isinstance(
+        semantic_rebuilt,
+        Image.Image,
+    ):
+
+        sources[
+            "Semantic Reconstruction"
+        ] = semantic_rebuilt
+
+    object_rebuilt = (
+        rebuild_layer_group(
+            "object"
+        )
+    )
+
+    if isinstance(
+        object_rebuilt,
+        Image.Image,
+    ):
+
+        sources[
+            "Object Layer Reconstruction"
+        ] = object_rebuilt
+
+    segment_rebuilt = (
+        rebuild_layer_group(
+            "segment"
+        )
+    )
+
+    if isinstance(
+        segment_rebuilt,
+        Image.Image,
+    ):
+
+        sources[
+            "Segmented Objects"
+        ] = segment_rebuilt
+
+    smart_color_layer = (
+        rebuild_layer_group(
+            "smartcolor"
+        )
+    )
+
+    if isinstance(
+        smart_color_layer,
+        Image.Image,
+    ):
+
+        sources[
+            "Extracted Color Layer"
+        ] = smart_color_layer
+
+    text_rebuilt = (
+        rebuild_layer_group(
+            "text"
+        )
+    )
+
+    if isinstance(
+        text_rebuilt,
+        Image.Image,
+    ):
+
+        sources[
+            "Text Layer Reconstruction"
+        ] = text_rebuilt
+
+    ocr_rebuilt = (
+        rebuild_layer_group(
+            "ocr"
+        )
+    )
+
+    if isinstance(
+        ocr_rebuilt,
+        Image.Image,
+    ):
+
+        sources[
+            "OCR Layer Reconstruction"
+        ] = ocr_rebuilt
+
+    return sources
+
+
+# =========================================================
+# OUTPUT STATE KEYS
+# =========================================================
+
+OUTPUT_SETTING_KEYS = [
+    "output_export_source",
+    "output_export_mode",
+    "output_single_format",
+    "output_multiple_formats",
+    "output_pixel_mode",
+    "output_target_pixels",
+    "output_maintain_ratio",
+    "output_custom_width",
+    "output_custom_height",
+    "output_dpi_mode",
+    "output_dpi_preset",
+    "output_custom_dpi",
+    "output_color_mode",
+    "output_resize_mode",
+    "output_quality",
+    "output_webp_lossless",
+    "output_png_compression",
+    "output_tiff_compression",
+    "smart_export_purpose",
+    "smart_export_priority",
+]
+
+
+# =========================================================
+# CLEAR WORKSPACE
+# =========================================================
+
+def clear_workspace_state():
+
+    prefixes = [
+        "color",
+        "semantic",
+        "object",
+        "segment",
+        "smartcolor",
+        "text",
+        "ocr",
+    ]
+
+    for prefix in prefixes:
+
+        for suffix in [
+            "layers",
+            "visibility",
+            "opacity",
+            "names",
+        ]:
+
+            key = (
+                f"{prefix}_{suffix}"
+            )
+
+            if key in st.session_state:
+
+                del st.session_state[
+                    key
+                ]
+
+    result_keys = [
+        "object_result",
+        "segmentation_result",
+        "background_remove_result",
+        "smart_color_result",
+        "smart_color_operation",
+        "text_detection_result",
+        "ocr_result",
+        "ocr_text_output",
+        "quality_result",
+        "quality_signature",
+        "professional_export_results",
+        "loaded_project_settings",
+        "project_settings_applied",
+    ]
+
+    for key in result_keys:
+
+        if key in st.session_state:
+
+            del st.session_state[
+                key
+            ]
+
+    for key in OUTPUT_SETTING_KEYS:
+
+        if key in st.session_state:
+
+            del st.session_state[
+                key
+            ]
+
+
+# =========================================================
+# DEFAULT OUTPUT SETTINGS
+# =========================================================
+
+def ensure_output_defaults(
+    original_width,
+    original_height,
+):
+
+    original_total = (
+        original_width
+        * original_height
+    )
+
+    st.session_state.setdefault(
+        "output_export_source",
+        "Original Image",
+    )
+
+    st.session_state.setdefault(
+        "output_export_mode",
+        "Single Format",
+    )
+
+    st.session_state.setdefault(
+        "output_single_format",
+        "PNG",
+    )
+
+    st.session_state.setdefault(
+        "output_multiple_formats",
+        [
+            "PNG",
+            "TIFF",
+        ],
+    )
+
+    st.session_state.setdefault(
+        "output_pixel_mode",
+        "Original Size",
+    )
+
+    st.session_state.setdefault(
+        "output_target_pixels",
+        max(
+            1,
+            min(
+                original_total,
+                150000,
+            ),
+        ),
+    )
+
+    st.session_state.setdefault(
+        "output_maintain_ratio",
+        True,
+    )
+
+    st.session_state.setdefault(
+        "output_custom_width",
+        max(
+            1,
+            min(
+                int(original_width),
+                150000,
+            ),
+        ),
+    )
+
+    st.session_state.setdefault(
+        "output_custom_height",
+        max(
+            1,
+            min(
+                int(original_height),
+                150000,
+            ),
+        ),
+    )
+
+    st.session_state.setdefault(
+        "output_dpi_mode",
+        "Preset",
+    )
+
+    st.session_state.setdefault(
+        "output_dpi_preset",
+        300,
+    )
+
+    st.session_state.setdefault(
+        "output_custom_dpi",
+        300,
+    )
+
+    st.session_state.setdefault(
+        "output_color_mode",
+        "RGB",
+    )
+
+    st.session_state.setdefault(
+        "output_resize_mode",
+        "Fit",
+    )
+
+    st.session_state.setdefault(
+        "output_quality",
+        95,
+    )
+
+    st.session_state.setdefault(
+        "output_webp_lossless",
+        False,
+    )
+
+    st.session_state.setdefault(
+        "output_png_compression",
+        6,
+    )
+
+    st.session_state.setdefault(
+        "output_tiff_compression",
+        "LZW - Lossless",
+    )
+
+    st.session_state.setdefault(
+        "smart_export_purpose",
+        "General Purpose",
+    )
+
+    st.session_state.setdefault(
+        "smart_export_priority",
+        "Balanced",
+    )
+
+
+# =========================================================
+# APPLY PROJECT SETTINGS
+# =========================================================
+
+def apply_loaded_project_settings():
+
+    if not st.session_state.get(
+        "project_is_open",
+        False,
+    ):
+        return
+
+    if st.session_state.get(
+        "project_settings_applied",
+        False,
+    ):
+        return
+
+    settings = (
+        st.session_state.get(
+            "loaded_project_settings",
+            {},
+        )
+    )
+
+    if not settings:
+        return
+
+    st.session_state[
+        "output_export_source"
+    ] = settings.get(
+        "export_source",
+        "Original Image",
+    )
+
+    export_mode = settings.get(
+        "export_mode",
+        "Single Format",
+    )
+
+    if export_mode not in (
+        "Single Format",
+        "Multiple Formats",
+    ):
+
+        export_mode = (
+            "Single Format"
+        )
+
+    st.session_state[
+        "output_export_mode"
+    ] = export_mode
+
+    saved_formats = settings.get(
+        "selected_formats",
+        ["PNG"],
+    )
+
+    if not isinstance(
+        saved_formats,
+        list,
+    ):
+
+        saved_formats = [
+            "PNG"
+        ]
+
+    saved_formats = [
+        item
+        for item
+        in saved_formats
+        if item
+        in VALID_EXPORT_FORMATS
+    ]
+
+    if not saved_formats:
+
+        saved_formats = [
+            "PNG"
+        ]
+
+    st.session_state[
+        "output_single_format"
+    ] = saved_formats[0]
+
+    st.session_state[
+        "output_multiple_formats"
+    ] = saved_formats
+
+    pixel_mode = settings.get(
+        "pixel_mode",
+        "Original Size",
+    )
+
+    if pixel_mode not in (
+        "Original Size",
+        "Target Total Pixels",
+        "Custom Dimensions",
+    ):
+
+        pixel_mode = (
+            "Original Size"
+        )
+
+    st.session_state[
+        "output_pixel_mode"
+    ] = pixel_mode
+
+    saved_width = max(
+        1,
+        min(
+            int(
+                settings.get(
+                    "target_width",
+                    1,
+                )
+            ),
+            150000,
+        ),
+    )
+
+    saved_height = max(
+        1,
+        min(
+            int(
+                settings.get(
+                    "target_height",
+                    1,
+                )
+            ),
+            150000,
+        ),
+    )
+
+    st.session_state[
+        "output_custom_width"
+    ] = saved_width
+
+    st.session_state[
+        "output_custom_height"
+    ] = saved_height
+
+    target_pixels = settings.get(
+        "target_total_pixels",
+        saved_width
+        * saved_height,
+    )
+
+    st.session_state[
+        "output_target_pixels"
+    ] = max(
+        1,
+        min(
+            int(target_pixels),
+            150000,
+        ),
+    )
+
+    st.session_state[
+        "output_maintain_ratio"
+    ] = bool(
+        settings.get(
+            "maintain_ratio",
+            True,
+        )
+    )
+
+    saved_dpi = max(
+        72,
+        min(
+            int(
+                settings.get(
+                    "dpi",
+                    300,
+                )
+            ),
+            1200,
+        ),
+    )
+
+    if saved_dpi in DPI_PRESETS:
+
+        st.session_state[
+            "output_dpi_mode"
+        ] = "Preset"
+
+        st.session_state[
+            "output_dpi_preset"
+        ] = saved_dpi
+
+        st.session_state[
+            "output_custom_dpi"
+        ] = saved_dpi
+
+    else:
+
+        st.session_state[
+            "output_dpi_mode"
+        ] = "Custom"
+
+        st.session_state[
+            "output_custom_dpi"
+        ] = saved_dpi
+
+    saved_color_mode = settings.get(
+        "color_mode",
+        "RGB",
+    )
+
+    if saved_color_mode not in (
+        "RGB",
+        "CMYK",
+        "Grayscale",
+    ):
+
+        saved_color_mode = (
+            "RGB"
+        )
+
+    st.session_state[
+        "output_color_mode"
+    ] = saved_color_mode
+
+    saved_resize_mode = settings.get(
+        "resize_mode",
+        "Fit",
+    )
+
+    if saved_resize_mode not in (
+        "Fit",
+        "Fill & Crop",
+        "Stretch",
+    ):
+
+        saved_resize_mode = (
+            "Fit"
+        )
+
+    st.session_state[
+        "output_resize_mode"
+    ] = saved_resize_mode
+
+    st.session_state[
+        "output_quality"
+    ] = max(
+        1,
+        min(
+            int(
+                settings.get(
+                    "quality",
+                    95,
+                )
+            ),
+            100,
+        ),
+    )
+
+    st.session_state[
+        "output_png_compression"
+    ] = max(
+        0,
+        min(
+            int(
+                settings.get(
+                    "png_compress_level",
+                    6,
+                )
+            ),
+            9,
+        ),
+    )
+
+    st.session_state[
+        "output_webp_lossless"
+    ] = bool(
+        settings.get(
+            "webp_lossless",
+            False,
+        )
+    )
+
+    tiff_value = settings.get(
+        "tiff_compression",
+        "tiff_lzw",
+    )
+
+    tiff_reverse = {
+        "tiff_lzw":
+            "LZW - Lossless",
+
+        "tiff_adobe_deflate":
+            "Deflate - Lossless",
+
+        "raw":
+            "Uncompressed",
+
+        "LZW - Lossless":
+            "LZW - Lossless",
+
+        "Deflate - Lossless":
+            "Deflate - Lossless",
+
+        "Uncompressed":
+            "Uncompressed",
+    }
+
+    st.session_state[
+        "output_tiff_compression"
+    ] = tiff_reverse.get(
+        tiff_value,
+        "LZW - Lossless",
+    )
+
+    purpose = settings.get(
+        "smart_export_purpose",
+        "General Purpose",
+    )
+
+    if purpose not in EXPORT_PURPOSES:
+
+        purpose = (
+            "General Purpose"
+        )
+
+    st.session_state[
+        "smart_export_purpose"
+    ] = purpose
+
+    priority = settings.get(
+        "smart_export_priority",
+        "Balanced",
+    )
+
+    if (
+        priority
+        not in SMART_EXPORT_PRIORITIES
+    ):
+
+        priority = (
+            "Balanced"
+        )
+
+    st.session_state[
+        "smart_export_priority"
+    ] = priority
+
+    st.session_state[
+        "project_settings_applied"
+    ] = True
+
+
+# =========================================================
+# EDITABLE LAYER PANEL
+# =========================================================
+
+def render_layer_panel(
+    prefix,
+    info_type="basic",
+):
+
+    layers_key = (
+        f"{prefix}_layers"
+    )
+
+    visibility_key = (
+        f"{prefix}_visibility"
+    )
+
+    opacity_key = (
+        f"{prefix}_opacity"
+    )
+
+    names_key = (
+        f"{prefix}_names"
+    )
+
+    if (
+        layers_key
+        not in st.session_state
+    ):
+
+        return None
+
+    layers = (
+        st.session_state[
+            layers_key
+        ]
+    )
+
+    if not layers:
+
+        st.warning(
+            "All layers have been deleted."
+        )
+
+        return None
+
+    st.write(
+        f"Total Layers: "
+        f"**{len(layers)}**"
+    )
+
+    for index, layer in enumerate(
+        layers
+    ):
+
+        uid = (
+            layer["_uid"]
+        )
+
+        with st.container(
+            border=True
+        ):
+
+            title_col, delete_col = (
+                st.columns(
+                    [5, 1]
+                )
+            )
+
+            with title_col:
+
+                st.markdown(
+                    f"### 🧩 Layer "
+                    f"{index + 1}"
+                )
+
+            with delete_col:
+
+                delete_clicked = (
+                    st.button(
+                        "🗑️ Delete",
+                        key=(
+                            f"delete_{uid}"
+                        ),
+                    )
+                )
+
+            if delete_clicked:
+
+                st.session_state[
+                    layers_key
+                ].pop(index)
+
+                st.session_state[
+                    visibility_key
+                ].pop(index)
+
+                st.session_state[
+                    opacity_key
+                ].pop(index)
+
+                st.session_state[
+                    names_key
+                ].pop(index)
+
+                st.rerun()
+
+            preview_col, control_col = (
+                st.columns(
+                    [1, 2]
+                )
+            )
+
+            with preview_col:
+
+                if (
+                    "image"
+                    in layer
+                ):
+
+                    st.image(
+                        layer["image"],
+                        use_container_width=True,
+                    )
+
+                if info_type in (
+                    "color",
+                    "smartcolor",
+                ):
+
+                    if "hex" in layer:
+
+                        st.color_picker(
+                            "Detected Color",
+                            value=(
+                                layer[
+                                    "hex"
+                                ]
+                            ),
+                            disabled=True,
+                            key=(
+                                f"color_{uid}"
+                            ),
+                        )
+
+                    if (
+                        "percentage"
+                        in layer
+                    ):
+
+                        st.caption(
+                            f"Area: "
+                            f"{layer['percentage']}%"
+                        )
+
+                    if (
+                        "pixel_count"
+                        in layer
+                    ):
+
+                        st.caption(
+                            f"Pixels: "
+                            f"{layer['pixel_count']:,}"
+                        )
+
+                elif (
+                    info_type
+                    == "semantic"
+                ):
+
+                    st.caption(
+                        f"Type: "
+                        f"{layer.get('type', 'region')}"
+                    )
+
+                elif info_type in (
+                    "object",
+                    "segmentation",
+                ):
+
+                    st.write(
+                        f"**Object:** "
+                        f"{layer.get('object_name', 'Object')}"
+                    )
+
+                    st.caption(
+                        f"Confidence: "
+                        f"{layer.get('confidence', 0)}%"
+                    )
+
+                    st.caption(
+                        f"Position: "
+                        f"X {layer.get('x', 0)}, "
+                        f"Y {layer.get('y', 0)}"
+                    )
+
+                    st.caption(
+                        f"Size: "
+                        f"{layer.get('width', 0)} × "
+                        f"{layer.get('height', 0)}"
+                    )
+
+                elif (
+                    info_type
+                    == "text"
+                ):
+
+                    st.caption(
+                        "Type: Text Region"
+                    )
+
+                elif (
+                    info_type
+                    == "ocr"
+                ):
+
+                    st.write(
+                        f"**Text:** "
+                        f"{layer.get('text', '')}"
+                    )
+
+                    st.caption(
+                        f"Confidence: "
+                        f"{layer.get('confidence', 0)}%"
+                    )
+
+            with control_col:
+
+                layer_name = (
+                    st.text_input(
+                        "Layer Name",
+                        value=(
+                            st.session_state[
+                                names_key
+                            ][index]
+                        ),
+                        key=(
+                            f"name_{uid}"
+                        ),
+                    )
+                )
+
+                st.session_state[
+                    names_key
+                ][index] = (
+                    layer_name
+                )
+
+                visible = (
+                    st.checkbox(
+                        "👁 Show Layer",
+                        value=(
+                            st.session_state[
+                                visibility_key
+                            ][index]
+                        ),
+                        key=(
+                            f"visible_{uid}"
+                        ),
+                    )
+                )
+
+                st.session_state[
+                    visibility_key
+                ][index] = visible
+
+                opacity = (
+                    st.slider(
+                        "Opacity",
+                        min_value=0,
+                        max_value=100,
+                        value=(
+                            st.session_state[
+                                opacity_key
+                            ][index]
+                        ),
+                        step=1,
+                        key=(
+                            f"opacity_{uid}"
+                        ),
+                    )
+                )
+
+                st.session_state[
+                    opacity_key
+                ][index] = opacity
+
+    return rebuild_image(
+        st.session_state[
+            layers_key
+        ],
+        visibility=(
+            st.session_state[
+                visibility_key
+            ]
+        ),
+        opacities=(
+            st.session_state[
+                opacity_key
+            ]
+        ),
     )
 
 
@@ -1453,970 +1711,3806 @@ with st.sidebar:
 # HEADER
 # =========================================================
 
-with st.container(
-    border=True
-):
+st.title(
+    "🖼️ AI Image Studio"
+)
 
-    st.title(
-        "🖼️ ImageCraft Pro"
-    )
+st.subheader(
+    "Analysis • Editable Layers • Object Recognition • "
+    "Segmentation • Color Editing • OCR • Smart Export • "
+    "Editable Projects • Professional Export"
+)
 
-    st.subheader(
-        "Professional Image Conversion & Export Studio"
-    )
+st.caption(
+    "OPEN → ANALYZE → EXTRACT → EDIT → "
+    "CHOOSE EXPORT SOURCE → SMART SETTINGS → "
+    "QUALITY CHECK → EXPORT"
+)
 
-    st.write(
-        "Prepare images for screen, print and "
-        "professional TIFF/BMP workflows."
-    )
+st.divider()
 
 
 # =========================================================
-# FEATURE CARDS
-# =========================================================
-
-feature1, feature2, feature3, feature4 = (
-    st.columns(4)
-)
-
-feature1.metric(
-    "Formats",
-    "4"
-)
-
-feature2.metric(
-    "Screen Quality",
-    "Up to 4K"
-)
-
-feature3.metric(
-    "DPI Range",
-    "72–600"
-)
-
-feature4.metric(
-    "Print Presets",
-    "A5–A2"
-)
-
-
-# =========================================================
-# UPLOAD
+# 01 — OPEN IMAGE / PROJECT
 # =========================================================
 
 st.header(
-    "📤 Upload Images"
-)
-
-uploaded_files = st.file_uploader(
-    "Upload PNG/JPG/JPEG",
-    type=[
-        "png",
-        "jpg",
-        "jpeg"
-    ],
-    accept_multiple_files=True,
-    label_visibility="collapsed"
+    "01 — 📂 Open Image or Project"
 )
 
 
+image_tab, project_tab = (
+    st.tabs(
+        [
+            "🖼️ Open Image",
+            "📁 Open .aistudio Project",
+        ]
+    )
+)
+
+
+with image_tab:
+
+    normal_uploaded_files = (
+        st.file_uploader(
+            "Drag & Drop Image Here",
+            type=[
+                "jpg",
+                "jpeg",
+                "png",
+                "webp",
+                "tiff",
+                "tif",
+                "bmp",
+            ],
+            accept_multiple_files=True,
+            key=(
+                "normal_image_uploader"
+            ),
+        )
+    )
+
+
 # =========================================================
-# EMPTY STATE
+# NORMAL IMAGE CHANGE
 # =========================================================
 
-if not uploaded_files:
+if normal_uploaded_files:
 
-    with st.container(
-        border=True
+    normal_signature = (
+        normal_uploaded_files[
+            0
+        ].name,
+
+        hashlib.sha1(
+            normal_uploaded_files[
+                0
+            ].getvalue()
+        ).hexdigest(),
+    )
+
+    if (
+        st.session_state.get(
+            "last_normal_upload_signature"
+        )
+        != normal_signature
     ):
 
-        st.subheader(
-            "🚀 Ready to Convert"
-        )
+        st.session_state[
+            "last_normal_upload_signature"
+        ] = normal_signature
 
-        st.write(
-            "Upload one or more PNG/JPG/JPEG images above."
-        )
+        st.session_state[
+            "active_input_mode"
+        ] = "image"
 
-        left, right = st.columns(2)
-
-        with left:
-
-            st.markdown(
-                """
-**Digital Export**
-
-- Original Size
-- HD
-- Full HD
-- 2K
-- 4K
-- Custom Pixels
-- Target Pixels: 0.75–1.50 lakh
-"""
-            )
-
-        with right:
-
-            st.markdown(
-                """
-**Print Export**
-
-- A5 / A4 / A3 / A2
-- Portrait / Landscape
-- Inches / CM / MM
-- 72–600 DPI
-- RGB / Grayscale
-"""
-            )
-
-        st.info(
-            "Converted files are downloaded directly "
-            "in the selected format. No ZIP is required."
-        )
-
-    st.stop()
+        st.session_state[
+            "project_is_open"
+        ] = False
 
 
 # =========================================================
-# SELECTED FILES
+# PROJECT UPLOAD
 # =========================================================
 
-st.success(
-    f"✅ {len(uploaded_files)} image(s) selected."
-)
+with project_tab:
 
-
-# =========================================================
-# FIRST IMAGE OUTPUT SPECIFICATION
-# =========================================================
-
-if output_format in (
-    "TIFF",
-    "BMP"
-):
-
-    try:
-
-        first_bytes = (
-            uploaded_files[0].getvalue()
-        )
-
-        with Image.open(
-            io.BytesIO(first_bytes)
-        ) as first_image:
-
-            first_original_size = (
-                first_image.size
-            )
-
-        target_width, target_height = (
-            calculate_target_size(
-                first_original_size,
-                size_mode,
-                screen_preset,
-                paper_size,
-                orientation,
-                custom_width,
-                custom_height,
-                custom_unit,
-                target_total_pixels,
-                dpi
-            )
-        )
-        # CUSTOM PIXELS OVERRIDE - OUTPUT SPEC
-        if custom_pixels_enabled:
-            target_width = int(
-                custom_pixel_width
-            )
-            target_height = int(
-                custom_pixel_height
-            )
-
-
-        (
-            expected_width,
-            expected_height
-        ) = predict_output_size(
-            first_original_size,
-            (
-                target_width,
-                target_height
+    project_file = (
+        st.file_uploader(
+            "Open AI Image Studio Project",
+            type=[
+                "aistudio",
+            ],
+            accept_multiple_files=False,
+            key=(
+                "project_uploader"
             ),
-            resize_behavior
         )
-
-        physical = (
-            pixels_to_physical_size(
-                expected_width,
-                expected_height,
-                dpi
-            )
-        )
-
-        width_in, height_in = (
-            physical["inches"]
-        )
-
-        width_cm, height_cm = (
-            physical["cm"]
-        )
-
-        st.subheader(
-            "📊 Output Specification"
-        )
-
-        spec1, spec2, spec3, spec4 = (
-            st.columns(4)
-        )
-
-        spec1.metric(
-            "Pixel Size",
-            (
-                f"{expected_width} × "
-                f"{expected_height}"
-            )
-        )
-
-        spec2.metric(
-            "DPI",
-            dpi
-        )
-
-        spec3.metric(
-            "Print Size",
-            (
-                f"{width_in:.2f} × "
-                f"{height_in:.2f} in"
-            )
-        )
-
-        spec4.metric(
-            "Print Size",
-            (
-                f"{width_cm:.1f} × "
-                f"{height_cm:.1f} cm"
-            )
-        )
-
-        # -------------------------------------------------
-        # QUALITY CHECK BEFORE CONVERSION
-        # -------------------------------------------------
-
-        (
-            quality_level,
-            quality_title,
-            quality_message
-        ) = get_quality_warning(
-            first_original_size[0],
-            first_original_size[1],
-            expected_width,
-            expected_height
-        )
-
-        if quality_level == "high":
-
-            st.warning(
-                f"⚠️ {quality_title}: "
-                f"{quality_message}"
-            )
-
-        elif quality_level == "medium":
-
-            st.info(
-                f"ℹ️ {quality_title}: "
-                f"{quality_message}"
-            )
-
-        elif quality_level == "light":
-
-            st.info(
-                f"ℹ️ {quality_title}: "
-                f"{quality_message}"
-            )
-
-        else:
-
-            st.success(
-                f"✅ {quality_title}: "
-                f"{quality_message}"
-            )
-
-        # -------------------------------------------------
-        # CURRENT SETTINGS
-        # -------------------------------------------------
-
-        with st.expander(
-            "⚙️ Current Export Settings",
-            expanded=False
-        ):
-
-            setting1, setting2, setting3 = (
-                st.columns(3)
-            )
-
-            with setting1:
-
-                st.write(
-                    f"**Size Mode:** "
-                    f"{size_mode}"
-                )
-
-                st.write(
-                    f"**DPI:** {dpi}"
-                )
-
-            with setting2:
-
-                st.write(
-                    f"**Resize Behaviour:** "
-                    f"{resize_behavior}"
-                )
-
-                st.write(
-                    f"**Color:** "
-                    f"{color_mode}"
-                )
-
-            with setting3:
-
-                st.write(
-                    f"**Quality:** "
-                    f"{resize_quality}"
-                )
-
-                if output_format == "TIFF":
-
-                    st.write(
-                        f"**Compression:** "
-                        f"{tiff_compression}"
-                    )
-
-    except Exception as error:
-
-        st.error(
-            f"Output settings error: {error}"
-        )
-
-
-# =========================================================
-# CONVERT BUTTON
-# =========================================================
-
-st.write("")
-
-convert_clicked = st.button(
-    "🚀 Convert Images",
-    type="primary",
-    use_container_width=True
-)
-
-
-# =========================================================
-# SESSION STATE
-# =========================================================
-
-if "conversion_results" not in (
-    st.session_state
-):
-
-    st.session_state[
-        "conversion_results"
-    ] = []
-
-
-if "conversion_signature" not in (
-    st.session_state
-):
-
-    st.session_state[
-        "conversion_signature"
-    ] = None
-
-
-file_signature = tuple(
-    (
-        uploaded_file.name,
-        uploaded_file.size
-    )
-    for uploaded_file
-    in uploaded_files
-)
-
-
-current_signature = (
-    file_signature,
-    output_format,
-    size_mode,
-    screen_preset,
-    paper_size,
-    orientation,
-    custom_width,
-    custom_height,
-    custom_unit,
-    custom_pixels_enabled,
-    custom_pixel_width,
-    custom_pixel_height,
-    target_total_pixels,
-    dpi,
-    color_mode,
-    resize_quality,
-    resize_behavior,
-    tiff_compression
-)
-
-
-# =========================================================
-# RUN CONVERSION
-# =========================================================
-
-if convert_clicked:
-
-    conversion_results = []
-
-    progress_bar = st.progress(
-        0,
-        text="Preparing conversion..."
     )
 
-    total_files = len(
-        uploaded_files
-    )
-
-    for index, uploaded_file in enumerate(
-        uploaded_files,
-        start=1
+    if (
+        project_file
+        is not None
     ):
 
         try:
 
-            progress_bar.progress(
-                (index - 1) / total_files,
-                text=(
-                    f"Converting "
-                    f"{uploaded_file.name}..."
+            project_information = (
+                get_project_info(
+                    project_file.getvalue()
                 )
             )
 
-            original_bytes = (
-                uploaded_file.getvalue()
+            p1, p2 = (
+                st.columns(2)
             )
 
-            with Image.open(
-                io.BytesIO(original_bytes)
-            ) as opened_image:
+            p1.write(
+                "**Original File:** "
+                f"{project_information.get('original_filename')}"
+            )
 
-                original_image = (
-                    opened_image.copy()
+            p1.write(
+                "**Version:** "
+                f"{project_information.get('version')}"
+            )
+
+            p2.write(
+                "**Layer Groups:** "
+                f"{project_information.get('group_count')}"
+            )
+
+            p2.write(
+                "**Total Layers:** "
+                f"{project_information.get('total_layers')}"
+            )
+
+            project_size = (
+                project_information.get(
+                    "original_size"
+                )
+            )
+
+            if project_size:
+
+                st.caption(
+                    f"Original Size: "
+                    f"{project_size[0]} × "
+                    f"{project_size[1]} px"
                 )
 
-                original_width, original_height = (
-                    opened_image.size
-                )
-
-                original_format = (
-                    opened_image.format
-                )
-
-                original_mode = (
-                    opened_image.mode
-                )
-
-                original_dpi = (
-                    opened_image.info.get(
-                        "dpi",
-                        "Not available"
-                    )
-                )
-
-            # ---------------------------------------------
-            # TARGET SIZE
-            # ---------------------------------------------
-
-            if output_format in (
-                "TIFF",
-                "BMP"
+            if st.button(
+                "📂 Open Project",
+                type="primary",
+                use_container_width=True,
             ):
 
-                target_width, target_height = (
-                    calculate_target_size(
-                        original_image.size,
-                        size_mode,
-                        screen_preset,
-                        paper_size,
-                        orientation,
-                        custom_width,
-                        custom_height,
-                        custom_unit,
-                        dpi
+                loaded_project = (
+                    load_project(
+                        project_file.getvalue()
                     )
                 )
-                # CUSTOM PIXELS OVERRIDE - CONVERSION
-                if custom_pixels_enabled:
-                    target_width = int(
-                        custom_pixel_width
-                    )
-                    target_height = int(
-                        custom_pixel_height
-                    )
 
-            else:
+                clear_workspace_state()
 
-                target_width, target_height = (
-                    original_image.size
+                project_original = (
+                    loaded_project[
+                        "original_image"
+                    ]
                 )
 
-            # ---------------------------------------------
-            # CONVERSION
-            # ---------------------------------------------
+                project_image_bytes = (
+                    image_to_bytes(
+                        project_original
+                    )
+                )
 
-            (
-                converted_data,
-                output_name,
-                mime,
-                output_image
-            ) = convert_uploaded_image(
-                uploaded_file,
-                output_format,
-                target_width,
-                target_height,
-                int(dpi),
-                color_mode,
-                resize_quality,
-                tiff_compression,
-                resize_behavior
-            )
+                project_filename = (
+                    loaded_project.get(
+                        "original_filename",
+                        "project_image.png",
+                    )
+                )
 
-            output_width, output_height = (
-                output_image.size
-            )
+                loaded_settings = (
+                    loaded_project.get(
+                        "settings",
+                        {},
+                    )
+                )
 
-            # ---------------------------------------------
-            # QUALITY CHECK
-            # ---------------------------------------------
+                st.session_state[
+                    "opened_project_image_bytes"
+                ] = (
+                    project_image_bytes
+                )
 
-            (
-                quality_level,
-                quality_title,
-                quality_message
-            ) = get_quality_warning(
-                original_width,
-                original_height,
-                output_width,
-                output_height
-            )
+                st.session_state[
+                    "opened_project_filename"
+                ] = (
+                    project_filename
+                )
 
-            conversion_results.append(
-                {
-                    "original_name":
-                        uploaded_file.name,
+                group_prefixes = {
+                    "color":
+                        "color",
 
-                    "original_preview":
-                        create_preview_bytes(
-                            original_image
-                        ),
+                    "semantic":
+                        "semantic",
 
-                    "original_width":
-                        original_width,
+                    "object":
+                        "object",
 
-                    "original_height":
-                        original_height,
+                    "segment":
+                        "segment",
 
-                    "original_format":
-                        original_format,
+                    "smartcolor":
+                        "smartcolor",
 
-                    "original_mode":
-                        original_mode,
+                    "text":
+                        "text",
 
-                    "original_dpi":
-                        original_dpi,
-
-                    "original_size_kb":
-                        len(original_bytes) / 1024,
-
-                    "output_preview":
-                        create_preview_bytes(
-                            output_image
-                        ),
-
-                    "output_width":
-                        output_width,
-
-                    "output_height":
-                        output_height,
-
-                    "output_size_kb":
-                        len(converted_data) / 1024,
-
-                    "output_name":
-                        output_name,
-
-                    "output_data":
-                        converted_data,
-
-                    "mime":
-                        mime,
-
-                    "quality_level":
-                        quality_level,
-
-                    "quality_title":
-                        quality_title,
-
-                    "quality_message":
-                        quality_message
+                    "ocr":
+                        "ocr",
                 }
+
+                for (
+                    group_name,
+                    prefix
+                ) in (
+                    group_prefixes.items()
+                ):
+
+                    layers = (
+                        loaded_project[
+                            "layer_groups"
+                        ].get(
+                            group_name,
+                            [],
+                        )
+                    )
+
+                    if layers:
+
+                        restore_project_layers(
+                            prefix,
+                            layers,
+                        )
+
+                edited_image = (
+                    loaded_project.get(
+                        "edited_image"
+                    )
+                )
+
+                saved_export_source = (
+                    loaded_settings.get(
+                        "export_source",
+                        "Original Image",
+                    )
+                )
+
+                if isinstance(
+                    edited_image,
+                    Image.Image,
+                ):
+
+                    if (
+                        saved_export_source
+                        == "Background Removed Image"
+                    ):
+
+                        st.session_state[
+                            "background_remove_result"
+                        ] = {
+                            "image":
+                                edited_image,
+                            "mask":
+                                None,
+                        }
+
+                    else:
+
+                        st.session_state[
+                            "smart_color_result"
+                        ] = (
+                            edited_image
+                        )
+
+                        st.session_state[
+                            "smart_color_operation"
+                        ] = (
+                            "Restored Project Edit"
+                        )
+
+                st.session_state[
+                    "loaded_project_settings"
+                ] = (
+                    loaded_settings
+                )
+
+                st.session_state[
+                    "project_settings_applied"
+                ] = False
+
+                st.session_state[
+                    "project_is_open"
+                ] = True
+
+                st.session_state[
+                    "active_input_mode"
+                ] = "project"
+
+                st.session_state[
+                    "active_image_signature"
+                ] = (
+                    project_filename,
+                    hashlib.sha1(
+                        project_image_bytes
+                    ).hexdigest(),
+                )
+
+                st.rerun()
+
+        except Exception as error:
+
+            st.error(
+                "Could not read this .aistudio project."
+            )
+
+            st.exception(
+                error
+            )
+
+
+# =========================================================
+# SWITCH BACK
+# =========================================================
+
+if (
+    normal_uploaded_files
+    and
+    st.session_state.get(
+        "active_input_mode"
+    )
+    == "project"
+):
+
+    if st.button(
+        "🖼️ Switch to Uploaded Image",
+        use_container_width=True,
+    ):
+
+        clear_workspace_state()
+
+        st.session_state[
+            "project_is_open"
+        ] = False
+
+        st.session_state[
+            "active_input_mode"
+        ] = "image"
+
+        st.rerun()
+
+
+# =========================================================
+# ACTIVE INPUT
+# =========================================================
+
+if (
+    st.session_state.get(
+        "active_input_mode"
+    )
+    == "project"
+    and
+    st.session_state.get(
+        "project_is_open",
+        False,
+    )
+    and
+    "opened_project_image_bytes"
+    in st.session_state
+):
+
+    uploaded_files = [
+
+        MemoryUploadedFile(
+            st.session_state.get(
+                "opened_project_filename",
+                "project_image.png",
+            ),
+
+            st.session_state[
+                "opened_project_image_bytes"
+            ],
+        )
+    ]
+
+elif normal_uploaded_files:
+
+    uploaded_files = (
+        normal_uploaded_files
+    )
+
+    st.session_state[
+        "active_input_mode"
+    ] = "image"
+
+else:
+
+    uploaded_files = []
+
+
+if not uploaded_files:
+
+    st.info(
+        "Upload an image or open an "
+        ".aistudio project to start."
+    )
+
+    st.stop()
+
+
+st.success(
+    f"{len(uploaded_files)} image(s) ready."
+)
+
+
+# =========================================================
+# ACTIVE IMAGE
+# =========================================================
+
+first_bytes = (
+    uploaded_files[
+        0
+    ].getvalue()
+)
+
+
+file_hash = (
+    hashlib.sha1(
+        first_bytes
+    ).hexdigest()
+)
+
+
+current_signature = (
+    uploaded_files[
+        0
+    ].name,
+    file_hash,
+)
+
+
+if (
+    st.session_state.get(
+        "active_image_signature"
+    )
+    != current_signature
+):
+
+    if not st.session_state.get(
+        "project_is_open",
+        False,
+    ):
+
+        clear_workspace_state()
+
+    st.session_state[
+        "active_image_signature"
+    ] = current_signature
+
+
+with Image.open(
+    io.BytesIO(
+        first_bytes
+    )
+) as opened:
+
+    first_image = opened.copy()
+
+    original_format = (
+        opened.format
+    )
+
+    original_mode = (
+        opened.mode
+    )
+
+    original_dpi = (
+        opened.info.get(
+            "dpi",
+            "Not available",
+        )
+    )
+
+
+original_width, original_height = (
+    first_image.size
+)
+
+
+if st.session_state.get(
+    "project_is_open",
+    False,
+):
+
+    st.success(
+        "📂 Editable .aistudio project is open."
+    )
+
+
+# =========================================================
+# 02 — ORIGINAL IMAGE
+# =========================================================
+
+st.header(
+    "02 — Original Image"
+)
+
+
+preview_col, info_col = (
+    st.columns(2)
+)
+
+
+with preview_col:
+
+    st.image(
+        first_image,
+        caption=(
+            uploaded_files[
+                0
+            ].name
+        ),
+        use_container_width=True,
+    )
+
+
+with info_col:
+
+    st.metric(
+        "Width",
+        f"{original_width:,} px",
+    )
+
+    st.metric(
+        "Height",
+        f"{original_height:,} px",
+    )
+
+    st.metric(
+        "Total Pixels",
+        f"{original_width * original_height:,}",
+    )
+
+    st.write(
+        f"**Format:** {original_format}"
+    )
+
+    st.write(
+        f"**Color Mode:** {original_mode}"
+    )
+
+    st.write(
+        f"**Original DPI:** {original_dpi}"
+    )
+
+
+st.divider()
+
+
+# =========================================================
+# 03 — ANALYSIS
+# =========================================================
+
+st.header(
+    "03 — 🤖 Image Analysis"
+)
+
+
+with st.spinner(
+    "Analyzing image..."
+):
+
+    analysis = (
+        cached_ai_analysis(
+            first_bytes
+        )
+    )
+
+
+stats = (
+    analysis[
+        "statistics"
+    ]
+)
+
+
+a1, a2, a3, a4 = (
+    st.columns(4)
+)
+
+
+a1.metric(
+    "Width",
+    f"{stats['width']} px",
+)
+
+a2.metric(
+    "Height",
+    f"{stats['height']} px",
+)
+
+a3.metric(
+    "Total Pixels",
+    f"{stats['total_pixels']:,}",
+)
+
+a4.metric(
+    "Edge Features",
+    f"{analysis['edge_pixels']:,}",
+)
+
+
+if stats[
+    "transparency"
+]:
+
+    st.info(
+        "Transparency detected: "
+        f"{stats['transparent_percentage']}%"
+    )
+
+else:
+
+    st.caption(
+        "No transparent areas detected."
+    )
+
+
+# =========================================================
+# COLORS
+# =========================================================
+
+st.subheader(
+    "🎨 Dominant Colors"
+)
+
+
+dominant_colors = (
+    analysis[
+        "dominant_colors"
+    ]
+)
+
+
+if dominant_colors:
+
+    columns = (
+        st.columns(
+            len(
+                dominant_colors
+            )
+        )
+    )
+
+    for index, (
+        column,
+        color
+    ) in enumerate(
+        zip(
+            columns,
+            dominant_colors,
+        )
+    ):
+
+        with column:
+
+            st.color_picker(
+                f"Color {index + 1}",
+                value=(
+                    color[
+                        "hex"
+                    ]
+                ),
+                disabled=True,
+                key=(
+                    f"analysis_color_{index}"
+                ),
+            )
+
+            st.caption(
+                color[
+                    "hex"
+                ].upper()
+            )
+
+            st.caption(
+                f"{color['percentage']}%"
+            )
+
+
+# =========================================================
+# SHAPES
+# =========================================================
+
+st.subheader(
+    "🔷 Shape Analysis"
+)
+
+
+shapes = (
+    analysis[
+        "shapes"
+    ]
+)
+
+
+s1, s2, s3, s4 = (
+    st.columns(4)
+)
+
+
+s1.metric(
+    "Rectangles",
+    shapes[
+        "rectangles"
+    ],
+)
+
+s2.metric(
+    "Triangles",
+    shapes[
+        "triangles"
+    ],
+)
+
+s3.metric(
+    "Circles / Curves",
+    shapes[
+        "circles_or_curves"
+    ],
+)
+
+s4.metric(
+    "Other Shapes",
+    shapes[
+        "other_shapes"
+    ],
+)
+
+
+st.divider()
+
+
+# =========================================================
+# 04 — COLOR LAYERS
+# =========================================================
+
+st.header(
+    "04 — 🎨 Color Editable Layers"
+)
+
+
+color_layer_count = (
+    st.slider(
+        "Number of Color Layers",
+        min_value=2,
+        max_value=12,
+        value=6,
+        step=1,
+    )
+)
+
+
+if st.button(
+    "🎨 Extract Color Layers",
+    use_container_width=True,
+):
+
+    with st.spinner(
+        "Creating color layers..."
+    ):
+
+        color_layers = (
+            extract_color_layers(
+                first_image,
+                layer_count=(
+                    color_layer_count
+                ),
+            )
+        )
+
+    initialize_layer_state(
+        "color",
+        color_layers,
+    )
+
+    st.success(
+        f"{len(color_layers)} "
+        f"color layers created."
+    )
+
+
+if (
+    "color_layers"
+    in st.session_state
+):
+
+    color_rebuilt = (
+        render_layer_panel(
+            "color",
+            "color",
+        )
+    )
+
+    if isinstance(
+        color_rebuilt,
+        Image.Image,
+    ):
+
+        left, right = (
+            st.columns(2)
+        )
+
+        with left:
+
+            st.image(
+                first_image,
+                caption="Original",
+                use_container_width=True,
+            )
+
+        with right:
+
+            st.image(
+                color_rebuilt,
+                caption=(
+                    "Color Reconstruction"
+                ),
+                use_container_width=True,
+            )
+
+
+st.divider()
+
+
+# =========================================================
+# 05 — SEMANTIC
+# =========================================================
+
+st.header(
+    "05 — 🧠 Smart Semantic Layers"
+)
+
+
+st.info(
+    "Semantic separation is approximate and does not "
+    "restore original Photoshop/CorelDRAW layers."
+)
+
+
+if st.button(
+    "✨ Detect Smart Semantic Layers",
+    use_container_width=True,
+):
+
+    with st.spinner(
+        "Detecting semantic regions..."
+    ):
+
+        semantic_layers = (
+            create_semantic_layers(
+                first_image
+            )
+        )
+
+    initialize_layer_state(
+        "semantic",
+        semantic_layers,
+    )
+
+    st.success(
+        f"{len(semantic_layers)} "
+        f"semantic layers created."
+    )
+
+
+if (
+    "semantic_layers"
+    in st.session_state
+):
+
+    semantic_rebuilt = (
+        render_layer_panel(
+            "semantic",
+            "semantic",
+        )
+    )
+
+    if isinstance(
+        semantic_rebuilt,
+        Image.Image,
+    ):
+
+        st.image(
+            semantic_rebuilt,
+            caption=(
+                "Semantic Reconstruction"
+            ),
+            use_container_width=True,
+        )
+
+
+st.divider()
+
+
+# =========================================================
+# 06 — OBJECT RECOGNITION
+# =========================================================
+
+st.header(
+    "06 — 🎯 AI Object Recognition"
+)
+
+
+object_confidence = (
+    st.slider(
+        "Object Detection Confidence",
+        min_value=20,
+        max_value=95,
+        value=50,
+        step=5,
+    )
+)
+
+
+max_objects = (
+    st.slider(
+        "Maximum Objects",
+        min_value=1,
+        max_value=20,
+        value=10,
+        step=1,
+    )
+)
+
+
+if st.button(
+    "🎯 Detect & Recognize Objects",
+    type="primary",
+    use_container_width=True,
+):
+
+    try:
+
+        with st.spinner(
+            "Recognizing objects..."
+        ):
+
+            object_result = (
+                create_object_layers(
+                    first_image,
+                    confidence_threshold=(
+                        object_confidence
+                        / 100.0
+                    ),
+                    max_objects=(
+                        max_objects
+                    ),
+                )
+            )
+
+        st.session_state[
+            "object_result"
+        ] = object_result
+
+        if object_result[
+            "layers"
+        ]:
+
+            initialize_layer_state(
+                "object",
+                object_result[
+                    "layers"
+                ],
+            )
+
+        st.success(
+            f"{object_result['object_count']} "
+            f"object(s) recognized."
+        )
+
+    except Exception as error:
+
+        st.error(
+            "Object recognition failed."
+        )
+
+        st.exception(
+            error
+        )
+
+
+if (
+    "object_result"
+    in st.session_state
+):
+
+    result = (
+        st.session_state[
+            "object_result"
+        ]
+    )
+
+    st.image(
+        result[
+            "preview"
+        ],
+        caption=(
+            "Detected Objects"
+        ),
+        use_container_width=True,
+    )
+
+
+if (
+    "object_layers"
+    in st.session_state
+):
+
+    render_layer_panel(
+        "object",
+        "object",
+    )
+
+
+st.divider()
+
+
+# =========================================================
+# 07 — SEGMENTATION
+# =========================================================
+
+st.header(
+    "07 — ✂️ Segmentation & Background Removal"
+)
+
+
+st.info(
+    "Segmentation uses object detection + GrabCut. "
+    "Masks are approximate."
+)
+
+
+seg_tab, bg_tab = (
+    st.tabs(
+        [
+            "🎯 Object Segmentation",
+            "🪄 Background Removal",
+        ]
+    )
+)
+
+
+with seg_tab:
+
+    seg_confidence = (
+        st.slider(
+            "Segmentation Confidence",
+            min_value=20,
+            max_value=95,
+            value=50,
+            step=5,
+        )
+    )
+
+    seg_max_objects = (
+        st.slider(
+            "Maximum Segmented Objects",
+            min_value=1,
+            max_value=20,
+            value=10,
+        )
+    )
+
+    seg_iterations = (
+        st.slider(
+            "Segmentation Refinement",
+            min_value=1,
+            max_value=10,
+            value=5,
+        )
+    )
+
+    seg_feather = (
+        st.slider(
+            "Edge Feather",
+            min_value=0,
+            max_value=15,
+            value=3,
+        )
+    )
+
+    if st.button(
+        "✂️ Segment Detected Objects",
+        type="primary",
+        use_container_width=True,
+    ):
+
+        try:
+
+            with st.spinner(
+                "Segmenting objects..."
+            ):
+
+                result = (
+                    create_segmented_object_layers(
+                        first_image,
+                        confidence_threshold=(
+                            seg_confidence
+                            / 100.0
+                        ),
+                        max_objects=(
+                            seg_max_objects
+                        ),
+                        iterations=(
+                            seg_iterations
+                        ),
+                        feather=(
+                            seg_feather
+                        ),
+                    )
+                )
+
+            st.session_state[
+                "segmentation_result"
+            ] = result
+
+            if result[
+                "layers"
+            ]:
+
+                initialize_layer_state(
+                    "segment",
+                    result[
+                        "layers"
+                    ],
+                )
+
+            st.success(
+                f"{result['object_count']} "
+                f"object(s) segmented."
             )
 
         except Exception as error:
 
             st.error(
-                f"{uploaded_file.name}: "
-                f"{error}"
+                "Segmentation failed."
             )
 
-    progress_bar.progress(
-        1.0,
-        text="Conversion complete."
+            st.exception(
+                error
+            )
+
+    if (
+        "segmentation_result"
+        in st.session_state
+    ):
+
+        st.image(
+            st.session_state[
+                "segmentation_result"
+            ][
+                "preview"
+            ],
+            caption=(
+                "Segmentation Preview"
+            ),
+            use_container_width=True,
+        )
+
+    if (
+        "segment_layers"
+        in st.session_state
+    ):
+
+        render_layer_panel(
+            "segment",
+            "segmentation",
+        )
+
+
+with bg_tab:
+
+    bg_margin = (
+        st.slider(
+            "Background Detection Margin (%)",
+            min_value=1,
+            max_value=15,
+            value=3,
+        )
+    )
+
+    bg_iterations = (
+        st.slider(
+            "Background Removal Refinement",
+            min_value=1,
+            max_value=10,
+            value=5,
+        )
+    )
+
+    bg_feather = (
+        st.slider(
+            "Background Edge Feather",
+            min_value=0,
+            max_value=15,
+            value=3,
+        )
+    )
+
+    if st.button(
+        "🪄 Remove Background",
+        type="primary",
+        use_container_width=True,
+    ):
+
+        try:
+
+            with st.spinner(
+                "Removing background..."
+            ):
+
+                result = (
+                    remove_background(
+                        first_image,
+                        margin_percent=(
+                            bg_margin
+                            / 100.0
+                        ),
+                        iterations=(
+                            bg_iterations
+                        ),
+                        feather=(
+                            bg_feather
+                        ),
+                    )
+                )
+
+            st.session_state[
+                "background_remove_result"
+            ] = result
+
+            st.success(
+                "Background removal complete."
+            )
+
+        except Exception as error:
+
+            st.error(
+                "Background removal failed."
+            )
+
+            st.exception(
+                error
+            )
+
+    if (
+        "background_remove_result"
+        in st.session_state
+    ):
+
+        st.image(
+            st.session_state[
+                "background_remove_result"
+            ][
+                "image"
+            ],
+            caption=(
+                "Background Removed"
+            ),
+            use_container_width=True,
+        )
+
+
+st.divider()
+
+
+# =========================================================
+# 08 — SMART COLOR EDITOR
+# =========================================================
+
+st.header(
+    "08 — 🎨 Smart Color Editor"
+)
+
+
+default_source_color = (
+    dominant_colors[
+        0
+    ][
+        "hex"
+    ]
+    if dominant_colors
+    else "#000000"
+)
+
+
+color_tabs = (
+    st.tabs(
+        [
+            "🎨 Replace",
+            "🫥 Remove",
+            "🧩 Extract Layer",
+            "🔀 Merge",
+        ]
+    )
+)
+
+
+with color_tabs[0]:
+
+    replace_source = (
+        st.color_picker(
+            "Source Color",
+            value=(
+                default_source_color
+            ),
+            key=(
+                "replace_source_color"
+            ),
+        )
+    )
+
+    replacement_color = (
+        st.color_picker(
+            "New Color",
+            value="#FF0000",
+            key=(
+                "replacement_color"
+            ),
+        )
+    )
+
+    replace_tolerance = (
+        st.slider(
+            "Tolerance",
+            min_value=0,
+            max_value=255,
+            value=30,
+            key=(
+                "replace_tolerance"
+            ),
+        )
+    )
+
+    preserve_shading = (
+        st.checkbox(
+            "Preserve Light / Shadow Detail",
+            value=True,
+        )
+    )
+
+    source_rgb = (
+        hex_to_rgb(
+            replace_source
+        )
+    )
+
+    preview = (
+        create_mask_preview(
+            first_image,
+            source_rgb,
+            replace_tolerance,
+        )
+    )
+
+    selection_info = (
+        color_selection_info(
+            first_image,
+            source_rgb,
+            replace_tolerance,
+        )
+    )
+
+    c1, c2 = (
+        st.columns(2)
+    )
+
+    with c1:
+
+        st.image(
+            preview,
+            use_container_width=True,
+        )
+
+    with c2:
+
+        st.metric(
+            "Selected Pixels",
+            f"{selection_info['selected_pixels']:,}",
+        )
+
+        st.metric(
+            "Selected Area",
+            f"{selection_info['percentage']}%",
+        )
+
+    if st.button(
+        "🎨 Apply Color Replacement",
+        type="primary",
+        use_container_width=True,
+    ):
+
+        edited = (
+            replace_color(
+                first_image,
+                source_rgb,
+                hex_to_rgb(
+                    replacement_color
+                ),
+                tolerance=(
+                    replace_tolerance
+                ),
+                preserve_shading=(
+                    preserve_shading
+                ),
+            )
+        )
+
+        st.session_state[
+            "smart_color_result"
+        ] = edited
+
+        st.session_state[
+            "smart_color_operation"
+        ] = (
+            "Color Replacement"
+        )
+
+        st.rerun()
+
+
+with color_tabs[1]:
+
+    remove_target = (
+        st.color_picker(
+            "Color to Remove",
+            value=(
+                default_source_color
+            ),
+            key=(
+                "remove_target_color"
+            ),
+        )
+    )
+
+    remove_tolerance = (
+        st.slider(
+            "Remove Tolerance",
+            min_value=0,
+            max_value=255,
+            value=30,
+        )
+    )
+
+    remove_feather = (
+        st.slider(
+            "Transparent Edge Feather",
+            min_value=0,
+            max_value=15,
+            value=3,
+        )
+    )
+
+    remove_rgb = (
+        hex_to_rgb(
+            remove_target
+        )
+    )
+
+    st.image(
+        create_mask_preview(
+            first_image,
+            remove_rgb,
+            remove_tolerance,
+        ),
+        use_container_width=True,
+    )
+
+    if st.button(
+        "🫥 Remove Selected Color",
+        type="primary",
+        use_container_width=True,
+    ):
+
+        edited = (
+            remove_color(
+                first_image,
+                remove_rgb,
+                tolerance=(
+                    remove_tolerance
+                ),
+                feather=(
+                    remove_feather
+                ),
+            )
+        )
+
+        st.session_state[
+            "smart_color_result"
+        ] = edited
+
+        st.session_state[
+            "smart_color_operation"
+        ] = (
+            "Transparent Color Removal"
+        )
+
+        st.rerun()
+
+
+with color_tabs[2]:
+
+    extract_target = (
+        st.color_picker(
+            "Color to Extract",
+            value=(
+                default_source_color
+            ),
+            key=(
+                "extract_target_color"
+            ),
+        )
+    )
+
+    extract_tolerance = (
+        st.slider(
+            "Extraction Tolerance",
+            min_value=0,
+            max_value=255,
+            value=30,
+        )
+    )
+
+    extract_feather = (
+        st.slider(
+            "Layer Edge Feather",
+            min_value=0,
+            max_value=15,
+            value=1,
+        )
+    )
+
+    if st.button(
+        "🧩 Extract Selected Color Layer",
+        type="primary",
+        use_container_width=True,
+    ):
+
+        layer = (
+            extract_color_layer(
+                first_image,
+                hex_to_rgb(
+                    extract_target
+                ),
+                tolerance=(
+                    extract_tolerance
+                ),
+                feather=(
+                    extract_feather
+                ),
+            )
+        )
+
+        initialize_layer_state(
+            "smartcolor",
+            [
+                layer
+            ],
+        )
+
+        st.rerun()
+
+    if (
+        "smartcolor_layers"
+        in st.session_state
+    ):
+
+        render_layer_panel(
+            "smartcolor",
+            "smartcolor",
+        )
+
+
+with color_tabs[3]:
+
+    merge_count = (
+        st.slider(
+            "Number of Source Colors",
+            min_value=2,
+            max_value=4,
+            value=2,
+        )
+    )
+
+    merge_sources = []
+
+    for index in range(
+        merge_count
+    ):
+
+        default_color = (
+            dominant_colors[
+                index
+            ][
+                "hex"
+            ]
+            if (
+                dominant_colors
+                and
+                index
+                < len(
+                    dominant_colors
+                )
+            )
+            else "#808080"
+        )
+
+        value = (
+            st.color_picker(
+                f"Source Color {index + 1}",
+                value=(
+                    default_color
+                ),
+                key=(
+                    f"merge_source_{index}"
+                ),
+            )
+        )
+
+        merge_sources.append(
+            hex_to_rgb(
+                value
+            )
+        )
+
+    destination = (
+        st.color_picker(
+            "Destination Color",
+            value="#0000FF",
+            key=(
+                "merge_destination"
+            ),
+        )
+    )
+
+    merge_tolerance = (
+        st.slider(
+            "Merge Tolerance",
+            min_value=0,
+            max_value=255,
+            value=30,
+        )
+    )
+
+    if st.button(
+        "🔀 Merge Selected Colors",
+        type="primary",
+        use_container_width=True,
+    ):
+
+        merged = (
+            merge_colors(
+                first_image,
+                merge_sources,
+                hex_to_rgb(
+                    destination
+                ),
+                tolerance=(
+                    merge_tolerance
+                ),
+                preserve_shading=True,
+            )
+        )
+
+        st.session_state[
+            "smart_color_result"
+        ] = merged
+
+        st.session_state[
+            "smart_color_operation"
+        ] = (
+            "Color Merge"
+        )
+
+        st.rerun()
+
+
+if (
+    "smart_color_result"
+    in st.session_state
+):
+
+    st.subheader(
+        "🖼️ Edited Result"
+    )
+
+    st.image(
+        st.session_state[
+            "smart_color_result"
+        ],
+        use_container_width=True,
+    )
+
+
+st.divider()
+
+
+# =========================================================
+# 09 — TEXT DETECTION
+# =========================================================
+
+st.header(
+    "09 — 🔤 Text Detection & Layers"
+)
+
+
+if st.button(
+    "🔍 Detect Text Regions",
+    use_container_width=True,
+):
+
+    result = (
+        create_text_layers(
+            first_image,
+            individual=True,
+        )
     )
 
     st.session_state[
-        "conversion_results"
-    ] = conversion_results
+        "text_detection_result"
+    ] = result
+
+    if result[
+        "individual_layers"
+    ]:
+
+        initialize_layer_state(
+            "text",
+            result[
+                "individual_layers"
+            ],
+        )
+
+    st.rerun()
+
+
+if (
+    "text_detection_result"
+    in st.session_state
+):
+
+    st.image(
+        st.session_state[
+            "text_detection_result"
+        ][
+            "preview"
+        ],
+        use_container_width=True,
+    )
+
+
+if (
+    "text_layers"
+    in st.session_state
+):
+
+    render_layer_panel(
+        "text",
+        "text",
+    )
+
+
+st.divider()
+
+
+# =========================================================
+# 10 — OCR
+# =========================================================
+
+st.header(
+    "10 — 🔎 OCR Text Recognition"
+)
+
+
+ocr_confidence = (
+    st.slider(
+        "OCR Minimum Confidence",
+        min_value=10,
+        max_value=95,
+        value=30,
+        step=5,
+    )
+)
+
+
+if st.button(
+    "🤖 Read Text with OCR",
+    type="primary",
+    use_container_width=True,
+):
+
+    try:
+
+        with st.spinner(
+            "Reading text..."
+        ):
+
+            result = (
+                create_ocr_layers(
+                    first_image,
+                    confidence_threshold=(
+                        ocr_confidence
+                        / 100.0
+                    ),
+                )
+            )
+
+        st.session_state[
+            "ocr_result"
+        ] = result
+
+        if result[
+            "layers"
+        ]:
+
+            initialize_layer_state(
+                "ocr",
+                result[
+                    "layers"
+                ],
+            )
+
+        st.rerun()
+
+    except Exception as error:
+
+        st.error(
+            "OCR failed."
+        )
+
+        st.exception(
+            error
+        )
+
+
+if (
+    "ocr_result"
+    in st.session_state
+):
+
+    result = (
+        st.session_state[
+            "ocr_result"
+        ]
+    )
+
+    st.image(
+        result[
+            "preview"
+        ],
+        use_container_width=True,
+    )
+
+    if result[
+        "full_text"
+    ].strip():
+
+        st.text_area(
+            "Extracted Text",
+            value=(
+                result[
+                    "full_text"
+                ]
+            ),
+            height=180,
+        )
+
+
+if (
+    "ocr_layers"
+    in st.session_state
+):
+
+    render_layer_panel(
+        "ocr",
+        "ocr",
+    )
+
+
+st.divider()
+
+
+# =========================================================
+# OUTPUT PREPARATION
+# =========================================================
+
+ensure_output_defaults(
+    original_width,
+    original_height,
+)
+
+apply_loaded_project_settings()
+
+
+# =========================================================
+# 11 — EXPORT SOURCE + SMART EXPORT
+# =========================================================
+
+st.header(
+    "11 — 🎯 Export Source & Smart Export"
+)
+
+
+available_export_sources = (
+    build_export_sources(
+        first_image
+    )
+)
+
+
+available_source_names = (
+    list(
+        available_export_sources.keys()
+    )
+)
+
+
+current_export_source = (
+    st.session_state.get(
+        "output_export_source",
+        "Original Image",
+    )
+)
+
+
+if (
+    current_export_source
+    not in available_source_names
+):
 
     st.session_state[
-        "conversion_signature"
-    ] = current_signature
+        "output_export_source"
+    ] = (
+        "Original Image"
+    )
+
+
+selected_export_source = (
+    st.selectbox(
+        "Choose Final Export Source",
+        available_source_names,
+        key=(
+            "output_export_source"
+        ),
+    )
+)
+
+
+export_source_image = (
+    available_export_sources[
+        selected_export_source
+    ]
+)
+
+
+st.caption(
+    "The selected image will be used for Smart Export, "
+    "Quality Check and final export."
+)
+
+
+source_preview_col, source_info_col = (
+    st.columns(
+        [2, 1]
+    )
+)
+
+
+with source_preview_col:
+
+    st.image(
+        export_source_image,
+        caption=(
+            selected_export_source
+        ),
+        use_container_width=True,
+    )
+
+
+with source_info_col:
+
+    source_width, source_height = (
+        export_source_image.size
+    )
+
+    st.metric(
+        "Source Width",
+        f"{source_width:,} px",
+    )
+
+    st.metric(
+        "Source Height",
+        f"{source_height:,} px",
+    )
+
+    st.metric(
+        "Source Mode",
+        export_source_image.mode,
+    )
+
+
+if (
+    selected_export_source
+    != "Original Image"
+    and
+    len(
+        uploaded_files
+    )
+    > 1
+):
+
+    st.info(
+        "Edited sources belong to the active first image. "
+        "Original Image can still be batch exported."
+    )
 
 
 # =========================================================
-# RESULTS
+# SMART EXPORT
 # =========================================================
 
-results = st.session_state[
-    "conversion_results"
-]
+st.subheader(
+    "🧠 Smart Export Recommendation"
+)
 
 
-if results:
+st.caption(
+    "The recommendation engine is rules-based and "
+    "uses image properties plus the selected purpose."
+)
 
-    if (
-        st.session_state[
-            "conversion_signature"
+
+smart_col1, smart_col2 = (
+    st.columns(2)
+)
+
+
+with smart_col1:
+
+    smart_purpose = (
+        st.selectbox(
+            "Export Purpose",
+            EXPORT_PURPOSES,
+            key=(
+                "smart_export_purpose"
+            ),
+        )
+    )
+
+
+with smart_col2:
+
+    smart_priority = (
+        st.selectbox(
+            "File Size / Quality Priority",
+            SMART_EXPORT_PRIORITIES,
+            key=(
+                "smart_export_priority"
+            ),
+        )
+    )
+
+
+try:
+
+    recommendation = (
+        recommend_export_settings(
+            export_source_image,
+            purpose=(
+                smart_purpose
+            ),
+            file_size_priority=(
+                smart_priority
+            ),
+        )
+    )
+
+    rec1, rec2, rec3, rec4 = (
+        st.columns(4)
+    )
+
+    rec1.metric(
+        "Format",
+        recommendation[
+            "format"
+        ],
+    )
+
+    rec2.metric(
+        "DPI",
+        recommendation[
+            "dpi"
+        ],
+    )
+
+    rec3.metric(
+        "Color Mode",
+        recommendation[
+            "color_mode"
+        ],
+    )
+
+    rec4.metric(
+        "Quality",
+        recommendation[
+            "quality"
+        ],
+    )
+
+    st.info(
+        recommendation[
+            "reason"
         ]
-        != current_signature
+    )
+
+    resolution = (
+        recommendation[
+            "resolution_analysis"
+        ]
+    )
+
+    st.write(
+        "**Resolution Check:** "
+        f"{resolution['level']} — "
+        f"{resolution['message']}"
+    )
+
+    for warning in (
+        recommendation[
+            "warnings"
+        ]
     ):
 
         st.warning(
-            "⚠️ Export settings or selected files have changed. "
-            "Click Convert Images again to update the results."
+            warning
+        )
+
+    if st.button(
+        "✨ Apply Recommended Settings",
+        type="primary",
+        use_container_width=True,
+    ):
+
+        recommended_format = (
+            recommendation[
+                "format"
+            ]
+        )
+
+        recommended_dpi = int(
+            recommendation[
+                "dpi"
+            ]
+        )
+
+        st.session_state[
+            "output_export_mode"
+        ] = (
+            "Single Format"
+        )
+
+        st.session_state[
+            "output_single_format"
+        ] = (
+            recommended_format
+        )
+
+        st.session_state[
+            "output_multiple_formats"
+        ] = [
+            recommended_format
+        ]
+
+        if (
+            recommended_dpi
+            in DPI_PRESETS
+        ):
+
+            st.session_state[
+                "output_dpi_mode"
+            ] = "Preset"
+
+            st.session_state[
+                "output_dpi_preset"
+            ] = recommended_dpi
+
+            st.session_state[
+                "output_custom_dpi"
+            ] = recommended_dpi
+
+        else:
+
+            st.session_state[
+                "output_dpi_mode"
+            ] = "Custom"
+
+            st.session_state[
+                "output_custom_dpi"
+            ] = recommended_dpi
+
+        st.session_state[
+            "output_color_mode"
+        ] = (
+            recommendation[
+                "color_mode"
+            ]
+        )
+
+        st.session_state[
+            "output_resize_mode"
+        ] = (
+            recommendation[
+                "resize_mode"
+            ]
+        )
+
+        st.session_state[
+            "output_quality"
+        ] = int(
+            recommendation[
+                "quality"
+            ]
+        )
+
+        st.session_state[
+            "output_webp_lossless"
+        ] = bool(
+            recommendation[
+                "webp_lossless"
+            ]
+        )
+
+        st.session_state[
+            "output_png_compression"
+        ] = int(
+            recommendation[
+                "png_compression"
+            ]
+        )
+
+        tiff_reverse = {
+            "tiff_lzw":
+                "LZW - Lossless",
+
+            "tiff_adobe_deflate":
+                "Deflate - Lossless",
+
+            "raw":
+                "Uncompressed",
+        }
+
+        st.session_state[
+            "output_tiff_compression"
+        ] = (
+            tiff_reverse.get(
+                recommendation[
+                    "tiff_compression"
+                ],
+                "LZW - Lossless",
+            )
+        )
+
+        for key in [
+            "quality_result",
+            "quality_signature",
+            "professional_export_results",
+        ]:
+
+            if key in st.session_state:
+
+                del st.session_state[
+                    key
+                ]
+
+        st.rerun()
+
+
+except Exception as error:
+
+    st.error(
+        "Smart Export recommendation failed."
+    )
+
+    st.exception(
+        error
+    )
+
+
+st.divider()
+
+
+# =========================================================
+# 12 — PROFESSIONAL OUTPUT SETTINGS
+# =========================================================
+
+st.header(
+    "12 — 🖨️ Professional Output Settings"
+)
+
+
+export_mode = (
+    st.radio(
+        "Export Mode",
+        [
+            "Single Format",
+            "Multiple Formats",
+        ],
+        horizontal=True,
+        key=(
+            "output_export_mode"
+        ),
+    )
+)
+
+
+if (
+    export_mode
+    == "Single Format"
+):
+
+    selected_formats = [
+        st.selectbox(
+            "Output Format",
+            VALID_EXPORT_FORMATS,
+            key=(
+                "output_single_format"
+            ),
+        )
+    ]
+
+else:
+
+    selected_formats = (
+        st.multiselect(
+            "Select Output Formats",
+            VALID_EXPORT_FORMATS,
+            key=(
+                "output_multiple_formats"
+            ),
+        )
+    )
+
+
+if (
+    "PSD (Flattened)"
+    in selected_formats
+):
+
+    st.info(
+        "PSD export is flattened. It opens as a PSD file, "
+        "but does not contain Photoshop-style editable layers. "
+        "Use .aistudio to preserve this app's editable layers."
+    )
+
+
+# =========================================================
+# PIXEL MODE
+# =========================================================
+
+pixel_mode = (
+    st.selectbox(
+        "Pixel Size Mode",
+        [
+            "Original Size",
+            "Target Total Pixels",
+            "Custom Dimensions",
+        ],
+        key=(
+            "output_pixel_mode"
+        ),
+    )
+)
+
+
+target_total_pixels = (
+    st.session_state.get(
+        "output_target_pixels",
+        100000,
+    )
+)
+
+
+maintain_ratio = (
+    st.session_state.get(
+        "output_maintain_ratio",
+        True,
+    )
+)
+
+
+source_width, source_height = (
+    export_source_image.size
+)
+
+
+if (
+    pixel_mode
+    == "Original Size"
+):
+
+    target_width = (
+        source_width
+    )
+
+    target_height = (
+        source_height
+    )
+
+    st.info(
+        f"Selected Source Size: "
+        f"{target_width:,} × "
+        f"{target_height:,} px"
+    )
+
+
+elif (
+    pixel_mode
+    == "Target Total Pixels"
+):
+
+    target_total_pixels = (
+        st.slider(
+            "Target Total Pixels",
+            min_value=1,
+            max_value=150000,
+            step=1,
+            key=(
+                "output_target_pixels"
+            ),
+        )
+    )
+
+    target_width, target_height = (
+        target_pixels_to_dimensions(
+            (
+                source_width,
+                source_height,
+            ),
+            target_total_pixels,
+        )
+    )
+
+    st.success(
+        f"Calculated Dimensions: "
+        f"{target_width:,} × "
+        f"{target_height:,} px"
+    )
+
+    st.caption(
+        f"Actual Total Pixels: "
+        f"{target_width * target_height:,}"
+    )
+
+
+else:
+
+    maintain_ratio = (
+        st.checkbox(
+            "Maintain Aspect Ratio",
+            key=(
+                "output_maintain_ratio"
+            ),
+        )
+    )
+
+    d1, d2 = (
+        st.columns(2)
+    )
+
+    with d1:
+
+        custom_width = (
+            st.number_input(
+                "Width (px)",
+                min_value=1,
+                max_value=150000,
+                step=1,
+                key=(
+                    "output_custom_width"
+                ),
+            )
+        )
+
+    if maintain_ratio:
+
+        (
+            target_width,
+            target_height,
+        ) = dimensions_from_width(
+            (
+                source_width,
+                source_height,
+            ),
+            int(
+                custom_width
+            ),
+        )
+
+        st.session_state[
+            "output_custom_height"
+        ] = int(
+            target_height
+        )
+
+        with d2:
+
+            st.number_input(
+                "Height (px)",
+                min_value=1,
+                max_value=150000,
+                step=1,
+                disabled=True,
+                key=(
+                    "output_custom_height"
+                ),
+            )
+
+    else:
+
+        with d2:
+
+            custom_height = (
+                st.number_input(
+                    "Height (px)",
+                    min_value=1,
+                    max_value=150000,
+                    step=1,
+                    key=(
+                        "output_custom_height"
+                    ),
+                )
+            )
+
+        target_width = int(
+            custom_width
+        )
+
+        target_height = int(
+            custom_height
+        )
+
+
+# =========================================================
+# DPI
+# =========================================================
+
+st.subheader(
+    "🖨️ Resolution / DPI"
+)
+
+
+dpi_mode = (
+    st.radio(
+        "DPI Selection",
+        [
+            "Preset",
+            "Custom",
+        ],
+        horizontal=True,
+        key=(
+            "output_dpi_mode"
+        ),
+    )
+)
+
+
+if (
+    dpi_mode
+    == "Preset"
+):
+
+    dpi = (
+        st.select_slider(
+            "DPI",
+            options=(
+                DPI_PRESETS
+            ),
+            key=(
+                "output_dpi_preset"
+            ),
+        )
+    )
+
+else:
+
+    dpi = (
+        st.number_input(
+            "Custom DPI",
+            min_value=72,
+            max_value=1200,
+            step=1,
+            key=(
+                "output_custom_dpi"
+            ),
+        )
+    )
+
+
+# =========================================================
+# COLOR MODE
+# =========================================================
+
+color_mode = (
+    st.selectbox(
+        "Color Mode",
+        [
+            "RGB",
+            "CMYK",
+            "Grayscale",
+        ],
+        key=(
+            "output_color_mode"
+        ),
+    )
+)
+
+
+if (
+    color_mode
+    == "CMYK"
+):
+
+    st.info(
+        "Current CMYK conversion is basic Pillow mode conversion. "
+        "For professional printing, confirm the required ICC profile "
+        "with your printer."
+    )
+
+
+# =========================================================
+# RESIZE
+# =========================================================
+
+resize_mode = (
+    st.selectbox(
+        "Resize Mode",
+        [
+            "Fit",
+            "Fill & Crop",
+            "Stretch",
+        ],
+        key=(
+            "output_resize_mode"
+        ),
+    )
+)
+
+
+# =========================================================
+# QUALITY
+# =========================================================
+
+quality = int(
+    st.session_state.get(
+        "output_quality",
+        95,
+    )
+)
+
+
+if (
+    "JPEG"
+    in selected_formats
+    or
+    "WEBP"
+    in selected_formats
+):
+
+    quality = (
+        st.slider(
+            "JPEG / WebP Quality",
+            min_value=1,
+            max_value=100,
+            key=(
+                "output_quality"
+            ),
+        )
+    )
+
+
+# =========================================================
+# WEBP
+# =========================================================
+
+webp_lossless = bool(
+    st.session_state.get(
+        "output_webp_lossless",
+        False,
+    )
+)
+
+
+if (
+    "WEBP"
+    in selected_formats
+):
+
+    webp_lossless = (
+        st.checkbox(
+            "WebP Lossless",
+            key=(
+                "output_webp_lossless"
+            ),
+        )
+    )
+
+
+# =========================================================
+# PNG
+# =========================================================
+
+png_compress_level = int(
+    st.session_state.get(
+        "output_png_compression",
+        6,
+    )
+)
+
+
+if (
+    "PNG"
+    in selected_formats
+):
+
+    png_compress_level = (
+        st.slider(
+            "PNG Compression",
+            min_value=0,
+            max_value=9,
+            key=(
+                "output_png_compression"
+            ),
+        )
+    )
+
+
+# =========================================================
+# TIFF
+# =========================================================
+
+tiff_compression_name = (
+    st.session_state.get(
+        "output_tiff_compression",
+        "LZW - Lossless",
+    )
+)
+
+
+if (
+    "TIFF"
+    in selected_formats
+):
+
+    tiff_compression_name = (
+        st.selectbox(
+            "TIFF Compression",
+            [
+                "LZW - Lossless",
+                "Deflate - Lossless",
+                "Uncompressed",
+            ],
+            key=(
+                "output_tiff_compression"
+            ),
+        )
+    )
+
+
+tiff_map = {
+    "LZW - Lossless":
+        "tiff_lzw",
+
+    "Deflate - Lossless":
+        "tiff_adobe_deflate",
+
+    "Uncompressed":
+        "raw",
+}
+
+
+tiff_compression = (
+    tiff_map.get(
+        tiff_compression_name,
+        "tiff_lzw",
+    )
+)
+
+
+# =========================================================
+# OUTPUT INFO
+# =========================================================
+
+total_output_pixels = (
+    int(
+        target_width
+    )
+    *
+    int(
+        target_height
+    )
+)
+
+
+o1, o2, o3, o4 = (
+    st.columns(4)
+)
+
+
+o1.metric(
+    "Width",
+    f"{target_width:,} px",
+)
+
+o2.metric(
+    "Height",
+    f"{target_height:,} px",
+)
+
+o3.metric(
+    "Total Pixels",
+    f"{total_output_pixels:,}",
+)
+
+o4.metric(
+    "DPI",
+    dpi,
+)
+
+
+print_width = (
+    target_width
+    / dpi
+)
+
+print_height = (
+    target_height
+    / dpi
+)
+
+
+p1, p2 = (
+    st.columns(2)
+)
+
+
+p1.metric(
+    "Print Size (inch)",
+    (
+        f"{print_width:.2f} × "
+        f"{print_height:.2f}"
+    ),
+)
+
+
+p2.metric(
+    "Print Size (cm)",
+    (
+        f"{print_width * 2.54:.2f} × "
+        f"{print_height * 2.54:.2f}"
+    ),
+)
+
+
+output_too_large = (
+    total_output_pixels
+    >
+    MAX_TOTAL_EXPORT_PIXELS
+)
+
+
+if output_too_large:
+
+    st.error(
+        "Selected output is too large for safe processing."
+    )
+
+elif (
+    total_output_pixels
+    > 100_000_000
+):
+
+    st.warning(
+        "Very large output selected. "
+        "This can require significant RAM."
+    )
+
+
+st.divider()
+
+
+# =========================================================
+# 13 — SAVE PROJECT
+# =========================================================
+
+st.header(
+    "13 — 💾 Save Editable Project"
+)
+
+
+project_name = (
+    st.text_input(
+        "Project Name",
+        value=(
+            os.path.splitext(
+                uploaded_files[
+                    0
+                ].name
+            )[0]
+        ),
+    )
+)
+
+
+project_settings = {
+
+    "export_source":
+        selected_export_source,
+
+    "target_width":
+        int(
+            target_width
+        ),
+
+    "target_height":
+        int(
+            target_height
+        ),
+
+    "target_total_pixels":
+        int(
+            target_total_pixels
+        ),
+
+    "maintain_ratio":
+        bool(
+            maintain_ratio
+        ),
+
+    "dpi":
+        int(
+            dpi
+        ),
+
+    "color_mode":
+        color_mode,
+
+    "resize_mode":
+        resize_mode,
+
+    "export_mode":
+        export_mode,
+
+    "selected_formats":
+        selected_formats,
+
+    "quality":
+        int(
+            quality
+        ),
+
+    "png_compress_level":
+        int(
+            png_compress_level
+        ),
+
+    "webp_lossless":
+        bool(
+            webp_lossless
+        ),
+
+    "tiff_compression":
+        tiff_compression,
+
+    "pixel_mode":
+        pixel_mode,
+
+    "smart_export_purpose":
+        smart_purpose,
+
+    "smart_export_priority":
+        smart_priority,
+}
+
+
+project_layer_groups = {
+
+    name:
+        collect_project_layers(
+            name
+        )
+
+    for name in [
+        "color",
+        "semantic",
+        "object",
+        "segment",
+        "smartcolor",
+        "text",
+        "ocr",
+    ]
+}
+
+
+project_layer_groups = {
+
+    name:
+        layers
+
+    for name, layers
+    in project_layer_groups.items()
+
+    if layers
+}
+
+
+project_edited_image = None
+
+
+if (
+    selected_export_source
+    == "Smart Color Edited Image"
+):
+
+    project_edited_image = (
+        st.session_state.get(
+            "smart_color_result"
+        )
+    )
+
+
+elif (
+    selected_export_source
+    == "Background Removed Image"
+):
+
+    result = (
+        st.session_state.get(
+            "background_remove_result"
+        )
+    )
+
+    if isinstance(
+        result,
+        dict,
+    ):
+
+        project_edited_image = (
+            result.get(
+                "image"
+            )
+        )
+
+
+try:
+
+    project_bytes = (
+        save_project(
+            original_image=(
+                first_image
+            ),
+            original_filename=(
+                uploaded_files[
+                    0
+                ].name
+            ),
+            layer_groups=(
+                project_layer_groups
+            ),
+            settings=(
+                project_settings
+            ),
+            edited_image=(
+                project_edited_image
+            ),
+        )
+    )
+
+    st.download_button(
+        "💾 Save .aistudio Project",
+        data=(
+            project_bytes
+        ),
+        file_name=(
+            f"{project_name.strip() or 'AI_Image_Project'}"
+            f".aistudio"
+        ),
+        mime=(
+            "application/octet-stream"
+        ),
+        use_container_width=True,
+    )
+
+except Exception as error:
+
+    st.error(
+        "Project file could not be prepared."
+    )
+
+    st.exception(
+        error
+    )
+
+
+st.divider()
+
+
+# =========================================================
+# 14 — QUALITY CHECK
+# =========================================================
+
+st.header(
+    "14 — ✅ Professional Quality Check"
+)
+
+
+st.caption(
+    "Rules-based preflight for the currently selected export source."
+)
+
+
+quality_format = (
+    selected_formats[
+        0
+    ]
+    if selected_formats
+    else "PNG"
+)
+
+
+# PSD uses normal raster-quality checks.
+quality_check_internal_format = (
+    "TIFF"
+    if (
+        quality_format
+        == "PSD (Flattened)"
+    )
+    else quality_format
+)
+
+
+if (
+    quality_format
+    == "PSD (Flattened)"
+):
+
+    st.info(
+        "PSD preflight uses TIFF-compatible raster checks. "
+        "The final PSD remains flattened."
+    )
+
+
+quality_signature = (
+    selected_export_source,
+    int(
+        target_width
+    ),
+    int(
+        target_height
+    ),
+    int(
+        dpi
+    ),
+    tuple(
+        selected_formats
+    ),
+    color_mode,
+    resize_mode,
+)
+
+
+if st.button(
+    "🔎 Run Professional Quality Check",
+    type="primary",
+    use_container_width=True,
+):
+
+    if not selected_formats:
+
+        st.warning(
+            "Select at least one output format."
+        )
+
+    elif output_too_large:
+
+        st.error(
+            "Output dimensions are too large."
         )
 
     else:
 
-        st.success(
-            f"✅ {len(results)} image(s) "
-            "converted successfully."
-        )
+        try:
 
-        st.header(
-            "✅ Conversion Results"
-        )
-
-        for index, result in enumerate(
-            results,
-            start=1
-        ):
-
-            with st.container(
-                border=True
+            with st.spinner(
+                "Checking final export source..."
             ):
 
-                st.subheader(
-                    f"{index}. "
-                    f"{result['original_name']}"
-                )
-
-                # -----------------------------------------
-                # METRICS
-                # -----------------------------------------
-
-                metric1, metric2, metric3, metric4 = (
-                    st.columns(4)
-                )
-
-                metric1.metric(
-                    "Original Pixels",
-                    (
-                        f"{result['original_width']} × "
-                        f"{result['original_height']}"
+                result = (
+                    run_quality_check(
+                        export_source_image,
+                        target_width=(
+                            target_width
+                        ),
+                        target_height=(
+                            target_height
+                        ),
+                        dpi=(
+                            dpi
+                        ),
+                        output_format=(
+                            quality_check_internal_format
+                        ),
+                        target_color_mode=(
+                            color_mode
+                        ),
                     )
                 )
 
-                metric2.metric(
-                    "Output Pixels",
-                    (
-                        f"{result['output_width']} × "
-                        f"{result['output_height']}"
-                    )
+            st.session_state[
+                "quality_result"
+            ] = result
+
+            st.session_state[
+                "quality_signature"
+            ] = (
+                quality_signature
+            )
+
+        except Exception as error:
+
+            st.error(
+                "Quality check failed."
+            )
+
+            st.exception(
+                error
+            )
+
+
+if (
+    "quality_result"
+    in st.session_state
+):
+
+    result = (
+        st.session_state[
+            "quality_result"
+        ]
+    )
+
+    if (
+        st.session_state.get(
+            "quality_signature"
+        )
+        != quality_signature
+    ):
+
+        st.warning(
+            "Export source or settings changed. "
+            "Run Quality Check again."
+        )
+
+    status = (
+        result[
+            "overall_status"
+        ]
+    )
+
+    if (
+        status
+        == "READY"
+    ):
+
+        st.success(
+            "✅ READY FOR EXPORT — "
+            f"{result['overall_message']}"
+        )
+
+    elif (
+        status
+        == "CHECK"
+    ):
+
+        st.warning(
+            "⚠️ CHECK BEFORE EXPORT — "
+            f"{result['overall_message']}"
+        )
+
+    else:
+
+        st.error(
+            "🔴 REVIEW RECOMMENDED — "
+            f"{result['overall_message']}"
+        )
+
+    q1, q2, q3 = (
+        st.columns(3)
+    )
+
+    q1.metric(
+        "Status",
+        status,
+    )
+
+    q2.metric(
+        "Passed",
+        result[
+            "pass_count"
+        ],
+    )
+
+    q3.metric(
+        "Warnings",
+        result[
+            "warning_count"
+        ],
+    )
+
+    for check in (
+        result[
+            "checks"
+        ]
+    ):
+
+        with st.container(
+            border=True
+        ):
+
+            st.write(
+                f"**{check['status']} — "
+                f"{check['title']}**"
+            )
+
+            st.write(
+                check[
+                    "message"
+                ]
+            )
+
+
+st.divider()
+
+
+# =========================================================
+# 15 — PROFESSIONAL EXPORT
+# =========================================================
+
+st.header(
+    "15 — 🚀 Professional Export"
+)
+
+
+st.write(
+    "**Final Export Source:** "
+    f"{selected_export_source}"
+)
+
+
+if (
+    selected_export_source
+    == "Original Image"
+):
+
+    export_jobs = []
+
+    for uploaded_file in (
+        uploaded_files
+    ):
+
+        try:
+
+            with Image.open(
+                io.BytesIO(
+                    uploaded_file.getvalue()
+                )
+            ) as opened:
+
+                image = (
+                    opened.copy()
                 )
 
-                metric3.metric(
-                    "Original Size",
-                    (
-                        f"{result['original_size_kb']:.1f} KB"
-                    )
+            base_name = (
+                os.path.splitext(
+                    uploaded_file.name
+                )[0]
+            )
+
+            export_jobs.append(
+                (
+                    base_name,
+                    image,
                 )
+            )
 
-                metric4.metric(
-                    "Output Size",
-                    (
-                        f"{result['output_size_kb']:.1f} KB"
-                    )
-                )
+        except Exception:
 
-                # -----------------------------------------
-                # QUALITY RESULT
-                # -----------------------------------------
+            pass
 
-                if result[
-                    "quality_level"
-                ] == "high":
 
-                    st.warning(
-                        f"⚠️ {result['quality_title']}: "
-                        f"{result['quality_message']}"
-                    )
+else:
 
-                elif result[
-                    "quality_level"
-                ] in (
-                    "medium",
-                    "light"
+    original_base_name = (
+        os.path.splitext(
+            uploaded_files[
+                0
+            ].name
+        )[0]
+    )
+
+    suffix = (
+        safe_filename_part(
+            selected_export_source
+        )
+    )
+
+    export_jobs = [
+        (
+            f"{original_base_name}_{suffix}",
+            export_source_image,
+        )
+    ]
+
+
+export_button = (
+    st.button(
+        "🚀 Export Final Image(s)",
+        type="primary",
+        use_container_width=True,
+        disabled=(
+            not selected_formats
+            or
+            output_too_large
+        ),
+    )
+)
+
+
+if export_button:
+
+    export_results = []
+
+    total_jobs = (
+        len(
+            export_jobs
+        )
+        *
+        len(
+            selected_formats
+        )
+    )
+
+    completed_jobs = 0
+
+    progress = (
+        st.progress(
+            0,
+            text=(
+                "Preparing exports..."
+            ),
+        )
+    )
+
+    for (
+        source_name,
+        source_image
+    ) in export_jobs:
+
+        for export_format in (
+            selected_formats
+        ):
+
+            completed_jobs += 1
+
+            progress.progress(
+                completed_jobs
+                / total_jobs,
+                text=(
+                    f"Exporting "
+                    f"{source_name} "
+                    f"as {export_format}..."
+                ),
+            )
+
+            try:
+
+                # =========================================
+                # PSD FLATTENED EXPORT
+                # =========================================
+
+                if (
+                    export_format
+                    == "PSD (Flattened)"
                 ):
 
-                    st.info(
-                        f"ℹ️ {result['quality_title']}: "
-                        f"{result['quality_message']}"
+                    export_result = (
+                        export_flattened_psd(
+                            image=(
+                                source_image
+                            ),
+                            width=(
+                                target_width
+                            ),
+                            height=(
+                                target_height
+                            ),
+                            resize_mode=(
+                                resize_mode
+                            ),
+                        )
                     )
+
+                # =========================================
+                # NORMAL EXPORT
+                # =========================================
 
                 else:
 
-                    st.success(
-                        f"✅ {result['quality_title']}: "
-                        f"{result['quality_message']}"
+                    export_result = (
+                        export_image(
+                            image=(
+                                source_image
+                            ),
+                            output_format=(
+                                export_format
+                            ),
+                            width=(
+                                target_width
+                            ),
+                            height=(
+                                target_height
+                            ),
+                            dpi=(
+                                dpi
+                            ),
+                            color_mode=(
+                                color_mode
+                            ),
+                            resize_mode=(
+                                resize_mode
+                            ),
+                            quality=(
+                                quality
+                            ),
+                            tiff_compression=(
+                                tiff_compression
+                            ),
+                            png_compress_level=(
+                                png_compress_level
+                            ),
+                            webp_lossless=(
+                                webp_lossless
+                            ),
+                        )
                     )
 
-                # -----------------------------------------
-                # TABS
-                # -----------------------------------------
-
-                preview_tab, info_tab = (
-                    st.tabs(
-                        [
-                            "🖼️ Before / After",
-                            "📊 Export Information"
-                        ]
-                    )
+                output_name = (
+                    f"{source_name}"
+                    f"{export_result['extension']}"
                 )
 
-                # =========================================
-                # PREVIEW
-                # =========================================
+                export_result[
+                    "output_name"
+                ] = output_name
 
-                with preview_tab:
+                export_result[
+                    "success"
+                ] = True
 
-                    before, after = (
-                        st.columns(2)
-                    )
-
-                    with before:
-
-                        st.subheader(
-                            "Original"
-                        )
-
-                        st.image(
-                            result[
-                                "original_preview"
-                            ],
-                            caption=(
-                                f"{result['original_width']} × "
-                                f"{result['original_height']} px"
-                            ),
-                            use_container_width=True
-                        )
-
-                    with after:
-
-                        st.subheader(
-                            "Converted"
-                        )
-
-                        st.image(
-                            result[
-                                "output_preview"
-                            ],
-                            caption=(
-                                f"{result['output_width']} × "
-                                f"{result['output_height']} px"
-                            ),
-                            use_container_width=True
-                        )
-
-                # =========================================
-                # INFORMATION
-                # =========================================
-
-                with info_tab:
-
-                    original_col, output_col = (
-                        st.columns(2)
-                    )
-
-                    with original_col:
-
-                        st.subheader(
-                            "Original Image"
-                        )
-
-                        st.write(
-                            f"**Format:** "
-                            f"{result['original_format']}"
-                        )
-
-                        st.write(
-                            f"**Pixels:** "
-                            f"{result['original_width']} × "
-                            f"{result['original_height']}"
-                        )
-
-                        st.write(
-                            f"**Color Mode:** "
-                            f"{result['original_mode']}"
-                        )
-
-                        st.write(
-                            f"**DPI:** "
-                            f"{result['original_dpi']}"
-                        )
-
-                        st.write(
-                            f"**File Size:** "
-                            f"{result['original_size_kb']:.2f} KB"
-                        )
-
-                    with output_col:
-
-                        st.subheader(
-                            "Exported Image"
-                        )
-
-                        st.write(
-                            f"**Format:** "
-                            f"{output_format}"
-                        )
-
-                        st.write(
-                            f"**Pixels:** "
-                            f"{result['output_width']} × "
-                            f"{result['output_height']}"
-                        )
-
-                        if output_format in (
-                            "TIFF",
-                            "BMP"
-                        ):
-
-                            st.write(
-                                f"**DPI:** "
-                                f"{dpi}"
-                            )
-
-                            st.write(
-                                f"**Color:** "
-                                f"{color_mode}"
-                            )
-
-                            st.write(
-                                f"**Resize Behaviour:** "
-                                f"{resize_behavior}"
-                            )
-
-                            st.write(
-                                f"**Resize Quality:** "
-                                f"{resize_quality}"
-                            )
-
-                            if output_format == "TIFF":
-
-                                st.write(
-                                    f"**Compression:** "
-                                    f"{tiff_compression}"
-                                )
-
-                            physical = (
-                                pixels_to_physical_size(
-                                    result[
-                                        "output_width"
-                                    ],
-                                    result[
-                                        "output_height"
-                                    ],
-                                    dpi
-                                )
-                            )
-
-                            print_inches = (
-                                physical["inches"]
-                            )
-
-                            print_cm = (
-                                physical["cm"]
-                            )
-
-                            st.write(
-                                "**Print Size:** "
-                                f"{print_inches[0]:.2f} × "
-                                f"{print_inches[1]:.2f} inches"
-                            )
-
-                            st.write(
-                                "**Print Size:** "
-                                f"{print_cm[0]:.1f} × "
-                                f"{print_cm[1]:.1f} cm"
-                            )
-
-                # -----------------------------------------
-                # NORMAL DIRECT DOWNLOAD
-                # -----------------------------------------
-
-                st.download_button(
-                    label=(
-                        f"⬇️ Download "
-                        f"{result['output_name']}"
-                    ),
-                    data=result[
-                        "output_data"
-                    ],
-                    file_name=result[
-                        "output_name"
-                    ],
-                    mime=result[
-                        "mime"
-                    ],
-                    key=(
-                        f"download_"
-                        f"{index}_"
-                        f"{output_format}"
-                    ),
-                    use_container_width=True
+                export_results.append(
+                    export_result
                 )
 
-                st.caption(
-                    f"Direct download: "
+            except Exception as error:
+
+                export_results.append(
+                    {
+                        "success":
+                            False,
+
+                        "format":
+                            export_format,
+
+                        "input":
+                            source_name,
+
+                        "error":
+                            str(
+                                error
+                            ),
+                    }
+                )
+
+    progress.empty()
+
+    st.session_state[
+        "professional_export_results"
+    ] = export_results
+
+    st.success(
+        "Export processing complete."
+    )
+
+
+# =========================================================
+# 16 — EXPORT RESULTS
+# =========================================================
+
+if (
+    "professional_export_results"
+    in st.session_state
+):
+
+    st.header(
+        "16 — 📦 Export Results"
+    )
+
+    results = (
+        st.session_state[
+            "professional_export_results"
+        ]
+    )
+
+    success_count = sum(
+        1
+        for result
+        in results
+        if result.get(
+            "success"
+        )
+    )
+
+    failure_count = (
+        len(
+            results
+        )
+        -
+        success_count
+    )
+
+    r1, r2 = (
+        st.columns(2)
+    )
+
+    r1.metric(
+        "Successful Exports",
+        success_count,
+    )
+
+    r2.metric(
+        "Failed Exports",
+        failure_count,
+    )
+
+    for index, result in enumerate(
+        results,
+        start=1,
+    ):
+
+        if not result.get(
+            "success"
+        ):
+
+            st.error(
+                f"{result.get('input')} → "
+                f"{result.get('format')}: "
+                f"{result.get('error')}"
+            )
+
+            continue
+
+        with st.container(
+            border=True
+        ):
+
+            st.subheader(
+                f"{index}. "
+                f"{result['output_name']}"
+            )
+
+            c1, c2, c3, c4 = (
+                st.columns(4)
+            )
+
+            c1.metric(
+                "Format",
+                result[
+                    "format"
+                ],
+            )
+
+            c2.metric(
+                "Dimensions",
+                (
+                    f"{result['width']} × "
+                    f"{result['height']}"
+                ),
+            )
+
+            result_dpi = (
+                result.get(
+                    "dpi"
+                )
+            )
+
+            c3.metric(
+                "DPI",
+                (
+                    result_dpi
+                    if result_dpi
+                    is not None
+                    else "N/A"
+                ),
+            )
+
+            c4.metric(
+                "Color Mode",
+                result[
+                    "mode"
+                ],
+            )
+
+            for warning in (
+                result.get(
+                    "warnings",
+                    [],
+                )
+            ):
+
+                st.warning(
+                    warning
+                )
+
+            st.download_button(
+                (
+                    "⬇️ Download "
                     f"{result['output_name']}"
-                )
+                ),
+                data=(
+                    result[
+                        "data"
+                    ]
+                ),
+                file_name=(
+                    result[
+                        "output_name"
+                    ]
+                ),
+                mime=(
+                    result[
+                        "mime"
+                    ]
+                ),
+                key=(
+                    f"download_"
+                    f"{index}_"
+                    f"{result['output_name']}"
+                ),
+                use_container_width=True,
+            )
 
 
 # =========================================================
@@ -2425,6 +5519,12 @@ if results:
 
 st.divider()
 
+
 st.caption(
-    "ImageCraft Pro • Professional Image Conversion & Export Studio"
+    "AI Image Studio • Analysis • Editable Layers • "
+    "Object Recognition • Segmentation • Background Removal • "
+    "Color Editing • OCR • Export Source Selection • "
+    "Smart Export • .aistudio Projects • Professional Preflight • "
+    "PNG • JPEG • WEBP • TIFF • BMP • PDF • PSD (Flattened) • "
+    "RGB • CMYK • Grayscale • 72–1200 DPI"
 )
